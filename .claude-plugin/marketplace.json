@@ -1,4 +1,5 @@
 {
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "mnemo-marketplace",
   "owner": {
     "name": "George Pagaremos",
@@ -7,8 +8,17 @@
   "plugins": [
     {
       "name": "mnemo",
-      "source": ".",
-      "description": "Long-term memory layer for Claude Code sessions"
+      "description": "Long-term memory layer for Claude Code sessions",
+      "author": {
+        "name": "George Pagaremos"
+      },
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/gremos/mnemo-client.git",
+        "path": ".",
+        "ref": "master",
+        "sha": "388c7172d6b9bc4008d1c2a9220a9a0d86d2bdb6"
+      }
     }
   ]
 }
