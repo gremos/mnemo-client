@@ -1,0 +1,9 @@
+[Unit]
+Description=Compile pending wiki auto-drafts via Claude Code
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/compile-wiki-auto.sh
+StandardOutput=journal
+StandardError=journal
