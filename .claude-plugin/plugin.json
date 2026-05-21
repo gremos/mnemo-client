@@ -1,7 +1,8 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "mnemo",
   "displayName": "Mnemo Memory",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
@@ -18,8 +19,70 @@
     "server_url": {
       "type": "string",
       "title": "Mnemo server URL",
-      "description": "Base URL of your Mnemo MCP server (e.g. http://localhost:3456 or http://192.168.1.10:3456)",
+      "description": "Base URL of your Mnemo MCP server (e.g. http://localhost:3456)",
       "default": "http://localhost:3456"
+    }
+  },
+  "commands": ["./memload.md", "./memsave.md"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/load-context.py"],
+            "timeout": 5,
+            "statusMessage": "Loading Mnemo context..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/guard-action.py"]
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/track-correction.py"],
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/wrap-session.sh"],
+            "async": true
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "mnemo": {
+      "type": "http",
+      "url": "${user_config.server_url}/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${user_config.api_token}"
+      }
     }
   }
 }
