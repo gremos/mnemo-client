@@ -204,6 +204,20 @@ if session_id and _start_sha:
     except Exception:
         pass
 
+# Auto-install compile-wiki scheduler on first plugin use (fail-silent, never blocks session start)
+_COMPILE_WIKI_SENTINEL = Path.home() / ".local/share/compile-wiki-auto/.installed"
+if not _COMPILE_WIKI_SENTINEL.exists():
+    try:
+        import importlib.util as _ilu
+        _setup_script = Path(__file__).parent / "compile-wiki-setup.py"
+        if _setup_script.exists():
+            _spec = _ilu.spec_from_file_location("compile_wiki_setup", _setup_script)
+            _mod = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            _mod.main()
+    except Exception:
+        pass
+
 # ---------------------------------------------------------------------------
 # Wiki pointer scanner
 # ---------------------------------------------------------------------------
