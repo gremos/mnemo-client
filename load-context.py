@@ -541,6 +541,17 @@ for _wr in _wiki_roots_active[:2]:
     if _index_used >= _index_budget:
         break
 
+_pending_wikis: list[str] = []
+for _wr in _wiki_roots_active[:2]:
+    _auto_dir = os.path.join(_wr, "raw", "auto")
+    if not os.path.isdir(_auto_dir):
+        continue
+    _count = sum(1 for f in os.listdir(_auto_dir) if f.endswith(".md"))
+    if _count:
+        _pending_wikis.append(f"{os.path.basename(_wr)} ({_count})")
+if _pending_wikis:
+    lines.append(f"  Wiki drafts pending compile: {', '.join(_pending_wikis)} — run compile-wiki from the wiki root to update")
+
 context = "\n".join(lines)
 
 # ---------------------------------------------------------------------------
