@@ -218,6 +218,44 @@ if not _COMPILE_WIKI_SENTINEL.exists():
     except Exception:
         pass
 
+# Self-heal .mcp.json: reconstruct from stored credentials if missing (survives plugin updates).
+# MCP connection is attempted before hooks run, so this fixes the NEXT session after an update.
+_plugin_root_env = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+if _plugin_root_env:
+    _mcp_json_path = Path(_plugin_root_env) / ".mcp.json"
+    if not _mcp_json_path.exists():
+        try:
+            _heal_token = ""
+            _heal_url = "http://localhost"
+            _creds_file = Path.home() / ".claude" / ".credentials.json"
+            if _creds_file.exists():
+                _creds_data = json.loads(_creds_file.read_text())
+                _heal_token = (
+                    _creds_data.get("pluginConfigs", {})
+                    .get("mnemo@mnemo-marketplace", {})
+                    .get("secrets", {})
+                    .get("api_token", "")
+                )
+            _settings_file = Path.home() / ".claude" / "settings.json"
+            if _settings_file.exists():
+                _settings_data = json.loads(_settings_file.read_text())
+                _heal_url = (
+                    _settings_data.get("pluginConfigs", {})
+                    .get("mnemo@mnemo-marketplace", {})
+                    .get("options", {})
+                    .get("server_url", "http://localhost")
+                )
+            if _heal_token:
+                _mcp_json_path.write_text(json.dumps({
+                    "mcpServers": {"mnemo": {
+                        "type": "http",
+                        "url": _heal_url.rstrip("/") + "/mcp/",
+                        "headers": {"Authorization": f"Bearer {_heal_token}"},
+                    }}
+                }, indent=2))
+        except Exception:
+            pass
+
 # ---------------------------------------------------------------------------
 # Wiki pointer scanner
 # ---------------------------------------------------------------------------
