@@ -63,7 +63,7 @@ WRAP_NEEDED=$(echo "$RESULT" | python3 -c \
 [[ -z "$WRAP_NEEDED" ]] && exit 0
 
 # 5. Spawn background mend — exit immediately so the user is not blocked.
-MEND_SCRIPT="$(dirname "$0")/mnemo-mend-bg.py"
+MEND_SCRIPT="$(dirname "$0")/wrap-session-bg.py"
 [[ ! -f "$MEND_SCRIPT" ]] && exit 0
 
 PYTHON="${MNEMO_PYTHON:-python3}"
