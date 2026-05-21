@@ -13,10 +13,9 @@
         "name": "George Pagaremos"
       },
       "source": {
-        "source": "git-subdir",
+        "source": "url",
         "url": "https://github.com/gremos/mnemo-client.git",
-        "path": ".",
-        "ref": "master"
+        "sha": "6d916ad49275358531545ec56f011e0faee1cee9"
       }
     }
   ]
