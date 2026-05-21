@@ -16,8 +16,8 @@
         "source": "git-subdir",
         "url": "https://github.com/gremos/mnemo-client.git",
         "path": ".",
-        "ref": "master",
-        "sha": "388c7172d6b9bc4008d1c2a9220a9a0d86d2bdb6"
+        "ref": "v1.0.0",
+        "sha": "bdf306d0730a80e221760355f5de9a0e505eb894"
       }
     }
   ]
