@@ -6,7 +6,7 @@
   "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
-    "email": "george.pagaremos@gmail.com"
+    "email": "gremos@users.noreply.github.com"
   },
   "userConfig": {
     "api_token": {
