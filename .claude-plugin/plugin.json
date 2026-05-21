@@ -1,27 +1,10 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "mnemo",
-  "displayName": "Mnemo Memory",
   "version": "2.0.0",
   "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
     "email": "gremos@users.noreply.github.com"
-  },
-  "userConfig": {
-    "api_token": {
-      "type": "string",
-      "title": "API token",
-      "description": "Bearer token for Mnemo authentication (from your Mnemo server setup)",
-      "sensitive": true,
-      "required": true
-    },
-    "server_url": {
-      "type": "string",
-      "title": "Mnemo server URL",
-      "description": "Base URL of your Mnemo MCP server (e.g. http://localhost:3456)",
-      "default": "http://localhost:3456"
-    }
   },
   "commands": ["./memload.md", "./memsave.md"],
   "hooks": {
