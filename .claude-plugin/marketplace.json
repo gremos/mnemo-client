@@ -1,0 +1,14 @@
+{
+  "name": "mnemo-marketplace",
+  "owner": {
+    "name": "George Pagaremos",
+    "email": "george.pagaremos@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "mnemo",
+      "source": ".",
+      "description": "Long-term memory layer for Claude Code sessions"
+    }
+  ]
+}
