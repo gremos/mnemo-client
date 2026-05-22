@@ -1,6 +1,6 @@
 {
   "name": "mnemo",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
