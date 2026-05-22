@@ -57,6 +57,14 @@ _CORRECTION_PATTERNS = [
     r"\bactually[,\s]+(no|don'?t|use|do|instead)\b",
     r"\bi\s+(said|meant|asked for|told you|wanted)\b",
     r"\bplease\s+(stop|don'?t)\b",
+    # Missed phrasings from session history
+    r"\bwait[,.]?\s*(no|actually|that|hold on)\b",
+    r"\bno[,.]?\s+actually\b",
+    r"\bnot\s+quite\b",
+    r"\b(you\s+)?(missed|forgot|skipped)\s+(the|that|this|a|to)\b",
+    r"\bthat\s+(doesn'?t|didn'?t|won'?t)\s+work\b",
+    r"\bthat'?s\s+(not\s+what\s+i|incomplete|not\s+right)\b",
+    r"\bthat'?s\s+not\s+what\s+i\s+(meant|asked|wanted|said)\b",
 ]
 
 
@@ -130,7 +138,7 @@ if cwd:
 try:
     import httpx
 
-    with httpx.Client(timeout=0.6) as client:
+    with httpx.Client(timeout=2.0) as client:
         init_resp = client.post(
             MCP_URL,
             headers={
@@ -173,6 +181,7 @@ try:
             "tool_name": "unknown",
             "normalized_action": user_prompt.strip()[:120],
             "correction_text": user_prompt.strip()[:400],
+            "session_id": claude_session_id or "unknown",
         }
         if _project:
             miss_args["project"] = _project
