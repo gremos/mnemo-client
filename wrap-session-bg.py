@@ -28,6 +28,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Allow importing sibling modules (mnemo_wiki_resolver, mnemo_wiki_write)
+_plugin_dir = Path(__file__).parent
+if str(_plugin_dir) not in sys.path:
+    sys.path.insert(0, str(_plugin_dir))
+
 # ---------------------------------------------------------------------------
 # Logging — writes to /tmp so it's visible for debugging without cluttering repo
 # ---------------------------------------------------------------------------
@@ -481,6 +486,8 @@ def main() -> None:
         log.error("Usage: mnemo-mend-bg.py <session_id> <cwd>")
         return
 
+    _self_heal_shim()
+
     session_id = sys.argv[1]
     cwd = sys.argv[2]
 
@@ -559,16 +566,7 @@ def main() -> None:
 def _maybe_auto_save_wiki(
     session_id: str, cwd: str, wiki_summary: str, session_summary: str, project: str
 ) -> None:
-    """Write an auto-generated wiki entry to raw/auto/ if it passes sanitization."""
-    # Import sanitizer from same scripts/ directory
-    _scripts_dir = Path(__file__).parent
-    sys.path.insert(0, str(_scripts_dir))
-    try:
-        from mnemo_wiki_sanitizer import is_clean, scan as sanitize_scan
-    except ImportError:
-        log.warning("mnemo_wiki_sanitizer not found — skipping wiki auto-save")
-        return
-
+    """Write an auto-generated wiki entry via mnemo_wiki_write (handles routing + sanitization)."""
     # Classify worthiness: check git activity since session start
     git_worthy = _check_git_activity(cwd)
     text_worthy = len(wiki_summary.strip()) > 80
@@ -576,54 +574,38 @@ def _maybe_auto_save_wiki(
         log.info("Wiki auto-save skipped: insufficient activity signal")
         return
 
-    # Collect commit SHAs since session start
-    commit_shas = _get_session_commits(cwd, session_id)
-
-    # Build the wiki file content
-    today = datetime.date.today().isoformat()
-    slug = re.sub(r"[^a-z0-9]+", "-", (project or "session").lower())[:30].strip("-")
-    filename = f"{today}-{slug}.md"
-
-    content = f"""---
-source: auto-mend
-date: {today}
-project: {project}
-auto: true
-mnemo_session_id: {session_id}
-commit_shas: {json.dumps(commit_shas)}
-tags: [auto-generated]
----
-
-# {session_summary[:80]}
-
-{wiki_summary.strip()}
-"""
-
-    # Fail-closed sanitization — strip the session_id before scanning
-    # (it's a valid UUID but not a secret; the regex flags all UUIDs as azure_guid)
-    content_for_scan = content.replace(session_id, "<SESSION_ID>")
-    hits = sanitize_scan(content_for_scan)
-    if hits:
-        log.warning("Wiki auto-save BLOCKED by sanitizer: %s",
-                    [(h.rule, h.match) for h in hits])
-        _save_wiki_event("wiki_blocked", project)
-        return
-
-    # Determine target wiki
-    auto_dir = _resolve_wiki_auto_dir(cwd)
-    if not auto_dir:
-        log.info("Wiki auto-save skipped: could not resolve wiki directory for cwd=%s", cwd)
-        return
-
-    # Write
     try:
-        auto_dir.mkdir(parents=True, exist_ok=True)
-        out_path = auto_dir / filename
-        out_path.write_text(content)
-        log.info("Wiki auto-saved: %s", out_path)
+        from mnemo_wiki_write import write_wiki_entry
+    except ImportError as exc:
+        log.warning("mnemo_wiki_write not found — skipping wiki auto-save: %s", exc)
+        return
+
+    commit_shas = _get_session_commits(cwd, session_id)
+    slug = re.sub(r"[^a-z0-9]+", "-", (project or "session").lower())[:30].strip("-")
+
+    ok, msg = write_wiki_entry(
+        body=wiki_summary.strip(),
+        cwd=cwd,
+        project=project,
+        slug=slug,
+        source="auto-mend",
+        title=session_summary[:80],
+        extra_frontmatter={
+            "mnemo_session_id": session_id,
+            "commit_shas": commit_shas,
+            "tags": ["auto-generated"],
+        },
+        create_default=True,
+        session_id_to_redact=session_id,
+    )
+
+    if ok:
+        log.info("Wiki auto-saved: %s", msg)
         _save_wiki_event("wiki_auto_save", project)
-    except Exception as e:
-        log.error("Wiki auto-save write failed: %s", e)
+    else:
+        log.warning("Wiki auto-save failed: %s", msg)
+        if "sanitizer" in msg:
+            _save_wiki_event("wiki_blocked", project)
 
 
 def _check_git_activity(cwd: str) -> bool:
@@ -723,15 +705,40 @@ def _save_wiki_event(event_type: str, project: str) -> None:
 
 
 def _resolve_wiki_auto_dir(cwd: str) -> Path | None:
-    """Return the raw/auto/ Path for the appropriate wiki based on cwd."""
-    home = Path.home()
-    if not cwd:
+    """Return the raw/auto/ Path for cwd via .mnemo-wiki marker walk-up."""
+    try:
+        from mnemo_wiki_resolver import resolve_wiki_auto_dir
+        return resolve_wiki_auto_dir(cwd, create_default=True)
+    except Exception as exc:
+        log.warning("mnemo_wiki_resolver unavailable: %s", exc)
         return None
-    if "/XO/" in cwd:
-        return home / "Documents/code/XO/wiki/raw/auto"
-    if "/Personal/" in cwd:
-        return home / "Documents/code/Personal/wiki/raw/auto"
-    return None
+
+
+def _self_heal_shim() -> None:
+    """One-shot: rewrite the installed compile-wiki-auto.sh to the shim if it's the old copy."""
+    sentinel = Path.home() / ".local/share/compile-wiki-auto/.shim-installed"
+    if sentinel.exists():
+        return
+    installed = Path.home() / ".local/bin/compile-wiki-auto.sh"
+    if not installed.exists():
+        return
+    shim_line = 'exec bash "${HOME}/.claude/plugins/mnemo-current/compile-wiki-auto.sh"'
+    try:
+        content = installed.read_text(encoding="utf-8")
+        if shim_line in content:
+            # Already a shim — just write sentinel
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.touch()
+            return
+        # Overwrite with shim
+        shim = f'#!/usr/bin/env bash\n# Shim — delegates to plugin dir so updates take effect automatically.\n{shim_line} "$@"\n'
+        installed.write_text(shim, encoding="utf-8")
+        installed.chmod(0o755)
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.touch()
+        log.info("Shim self-heal: rewrote %s to delegate to plugin dir", installed)
+    except Exception as exc:
+        log.warning("Shim self-heal failed (non-fatal): %s", exc)
 
 
 if __name__ == "__main__":

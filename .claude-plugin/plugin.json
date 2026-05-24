@@ -1,12 +1,12 @@
 {
   "name": "mnemo",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
     "email": "gremos@users.noreply.github.com"
   },
-  "commands": ["./memload.md", "./memsave.md"],
+  "commands": ["./memload.md", "./memsave.md", "./wiki-save.md", "./wiki-compile.md", "./wiki-init.md"],
   "hooks": {
     "SessionStart": [
       {

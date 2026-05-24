@@ -12,10 +12,8 @@ DATE=$(date +%Y-%m-%d)
 
 mkdir -p "$LOG_DIR"
 
-WIKIS=(
-    "${HOME}/Documents/code/Personal/wiki"
-    "${HOME}/Documents/code/XO/wiki"
-)
+RESOLVER="${HOME}/.claude/plugins/mnemo-current/mnemo_wiki_resolver.py"
+mapfile -t WIKIS < <(python3 "$RESOLVER" discover --create-default 2>/dev/null)
 
 compiled=0
 for wiki_root in "${WIKIS[@]}"; do

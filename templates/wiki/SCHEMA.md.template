@@ -1,0 +1,45 @@
+# Mnemo Wiki — Schema & Conventions
+
+## Purpose
+
+Personal knowledge base compiled automatically from Claude Code sessions via the
+Karpathy LLM Wiki pattern. Updated by the Mnemo plugin Stop hook and the
+`/mnemo:wiki-save` slash command.
+
+## Taxonomy
+
+Organise pages under `wiki/` using subdirectories:
+
+| Path | For |
+|---|---|
+| `wiki/projects/<name>.md` | Per-project notes, decisions, status |
+| `wiki/concepts/<topic>.md` | Technology concepts, patterns, how-tos |
+| `wiki/infra/<service>.md` | Infrastructure, deployment, ops |
+| `wiki/inbox/` | Unclassified entries — review and re-file periodically |
+
+## Frontmatter conventions
+
+Every page in `wiki/` must have:
+
+```yaml
+---
+tags: [<taxonomy-tag>, ...]
+updated: YYYY-MM-DD
+project: <name>    # omit for cross-project concept pages
+---
+```
+
+## Entry conventions
+
+- Pages use `[[page-name]]` links to related pages (check index.md for candidates).
+- Machine-generated drafts (`auto: true`) in `raw/auto/` are supplementary context
+  only — the compiler treats them as lower-confidence than human-reviewed `raw/` entries.
+- Never include credentials, API keys, secrets, or connection strings.
+- Keep pages atomic and scannable: one clear topic per page.
+
+## Seed pages
+
+Bootstrap with these pages on first compile (if wiki/ has no pages yet):
+
+- `wiki/projects/default.md` — general project notes
+- `wiki/concepts/setup.md` — environment and toolchain setup
