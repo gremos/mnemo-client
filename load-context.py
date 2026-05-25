@@ -581,6 +581,17 @@ if _pending_wikis:
 
 context = "\n".join(lines)
 
+# Prepend setup hint if ~/.mnemo.env is missing (new install or unconfigured machine)
+if not (Path.home() / ".mnemo.env").exists():
+    _plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "~/.claude/plugins/mnemo-current")
+    _hint = (
+        f"⚠️  Mnemo not configured. Run to set up:\n"
+        f"  bash {_plugin_root}/mnemo-setup.sh <server_url> <api_token>\n"
+        f"  # Example: bash {_plugin_root}/mnemo-setup.sh http://localhost mcp_admin_token\n"
+        f"Then restart Claude Code."
+    )
+    context = _hint + ("\n\n" + context if context else "")
+
 # ---------------------------------------------------------------------------
 # Output JSON for Claude Code to inject as additionalContext
 # ---------------------------------------------------------------------------
