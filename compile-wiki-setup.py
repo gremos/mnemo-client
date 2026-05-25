@@ -171,6 +171,52 @@ def _install_windows(plugin_root: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# MCP config self-heal (no sentinel — runs every session)
+# ---------------------------------------------------------------------------
+
+_MNEMO_ENV   = Path.home() / ".mnemo.env"
+_SETTINGS_JS = Path.home() / ".claude" / "settings.json"
+
+
+def setup_mcp_config() -> None:
+    """Write settings.json.mcpServers.mnemo from ~/.mnemo.env.
+
+    Runs unconditionally at every session start so the entry survives
+    `claude plugin install` clearing mcpServers. Fails silently.
+    """
+    if not _MNEMO_ENV.exists() or not _SETTINGS_JS.exists():
+        return
+    try:
+        env: dict = {}
+        for raw in _MNEMO_ENV.read_text().splitlines():
+            line = raw.strip()
+            if "=" in line and not line.startswith("#"):
+                k, _, v = line.partition("=")
+                env[k.strip()] = v.strip().strip('"').strip("'")
+
+        host  = env.get("MNEMO_HOST", "localhost")
+        port  = env.get("MNEMO_PORT", "")
+        token = env.get("MNEMO_ADMIN_TOKEN", "")
+        if not token:
+            return
+
+        if port and port not in ("80", "443", ""):
+            url = f"http://{host}:{port}/mcp/"
+        else:
+            url = f"http://{host}/mcp/"
+
+        settings = json.loads(_SETTINGS_JS.read_text())
+        settings.setdefault("mcpServers", {})["mnemo"] = {
+            "type": "http",
+            "url": url,
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+        _SETTINGS_JS.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
