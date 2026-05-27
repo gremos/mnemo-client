@@ -3,18 +3,23 @@
 mnemo Background Mend Script
 
 Called by the Stop hook after Claude exits. Reads the session conversation JSONL,
-sends the last N messages to Azure OpenAI for structured extraction (corrections,
-approvals, outcome, summary), then calls wrap_session via the Mnemo MCP API.
+sends the text to Azure OpenAI for structured extraction (corrections, approvals,
+outcome, summary, wiki_summary), then calls wrap_session via the Mnemo MCP API.
+
+If AZURE_OPENAI_* credentials are not set locally, the raw conversation text is sent
+to the server via the session_text param and extraction happens server-side.
 
 Runs fully detached — no user delay, no Claude token cost.
 
 Usage (from hook):
     python3 mnemo-mend-bg.py <session_id> <cwd>
 
-Requires env vars (from ~/.claude/skills/mnemo/.env or environment):
-    AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_VERSION,
+Requires env vars (from ~/.mnemo.env or environment):
     MNEMO_HOOK_KEY (or MNEMO_ADMIN_TOKEN), MNEMO_HOST, MNEMO_PORT
+
+Optional (Azure extraction runs locally if set; otherwise delegated to server):
+    AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
+    AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_VERSION
 """
 from __future__ import annotations
 
@@ -305,12 +310,14 @@ def _parse_sse(body: str) -> dict:
 
 
 def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
-                  corrections: int | None, approvals: int) -> bool:
+                  corrections: int | None, approvals: int,
+                  session_text: str | None = None) -> dict | None:
+    """Call wrap_session MCP tool. Returns parsed result dict on success, None on failure."""
     try:
         import httpx
     except ImportError:
         log.error("httpx not installed")
-        return False
+        return None
 
     headers = {
         "Content-Type": "application/json",
@@ -321,7 +328,9 @@ def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
         headers["X-PC-Id"] = PC_ID
 
     try:
-        with httpx.Client(timeout=8) as client:
+        # Increase timeout when session_text is provided — server calls Azure OpenAI
+        timeout = 30 if session_text else 8
+        with httpx.Client(timeout=timeout) as client:
             # Initialize MCP session
             init = client.post(MCP_URL, headers=headers, json={
                 "jsonrpc": "2.0", "id": 0, "method": "initialize",
@@ -342,29 +351,38 @@ def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
                            "arguments": {"claude_session_id": session_id}},
             })
 
+            arguments: dict = {
+                "summary": summary,
+                "outcome": outcome,
+                "corrections": corrections,
+                "approvals": approvals,
+                "project": project,
+                "tags": ["auto-mend"],
+            }
+            if session_text:
+                arguments["session_text"] = session_text
+
             # Call wrap_session
             resp = client.post(MCP_URL, headers=headers, json={
                 "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                "params": {
-                    "name": "wrap_session",
-                    "arguments": {
-                        "summary": summary,
-                        "outcome": outcome,
-                        "corrections": corrections,
-                        "approvals": approvals,
-                        "project": project,
-                        "tags": ["auto-mend"],
-                    },
-                },
+                "params": {"name": "wrap_session", "arguments": arguments},
             })
             resp.raise_for_status()
             data = _parse_sse(resp.text)
             log.info("wrap_session response: %s", data.get("result", {}).get("content", "")[:200])
-            return True
+            # Parse the result content (FastMCP wraps result in content[0].text as JSON)
+            result_obj: dict = {}
+            try:
+                content_list = data.get("result", {}).get("content", [])
+                if content_list and isinstance(content_list[0], dict):
+                    result_obj = json.loads(content_list[0].get("text", "{}"))
+            except Exception:
+                pass
+            return result_obj
 
     except Exception as e:
         log.error("MCP wrap_session failed: %s", e)
-        return False
+        return None
 
 # ---------------------------------------------------------------------------
 # Main
@@ -491,9 +509,6 @@ def main() -> None:
     session_id = sys.argv[1]
     cwd = sys.argv[2]
 
-    if not AZURE_ENDPOINT or not AZURE_API_KEY:
-        log.error("AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_API_KEY not set — skipping")
-        return
     if not MNEMO_KEY:
         log.error("MNEMO_HOOK_KEY / MNEMO_ADMIN_TOKEN not set — skipping")
         return
@@ -521,36 +536,55 @@ def main() -> None:
     log.info("Loaded %d messages from %s", len(messages), jsonl)
     conversation_text = _build_conversation_text(messages)
 
-    # Call Azure OpenAI
-    try:
-        extracted = _call_azure(conversation_text)
-    except Exception as e:
-        log.error("Azure call failed: %s — falling back to neutral wrap", e)
-        extracted = {"corrections": None, "approvals": 0,
-                     "outcome": "partial", "summary": "Session ended (mend extraction failed)."}
+    # Try local Azure extraction if credentials are available; otherwise delegate to server
+    wiki_summary: str | None = None
+    anti_patterns: list = []
+    decisions: list = []
+    summary = "Session wrapped automatically."
+    outcome = "partial"
+    corrections = None
+    approvals = 0
+    session_text_for_server: str | None = None
 
-    summary   = str(extracted.get("summary", "Session wrapped automatically."))[:500]
-    outcome   = extracted.get("outcome", "partial")
-    if outcome not in ("success", "partial", "failure"):
-        outcome = "partial"
-    corrections = extracted.get("corrections")
-    if corrections is not None:
+    if AZURE_ENDPOINT and AZURE_API_KEY:
         try:
-            corrections = int(corrections)
-        except (TypeError, ValueError):
-            corrections = None
-    approvals = int(extracted.get("approvals") or 0)
-    anti_patterns = extracted.get("anti_patterns") or []
-    decisions = extracted.get("decisions") or []
-    wiki_summary = extracted.get("wiki_summary") or None
+            extracted = _call_azure(conversation_text)
+            summary   = str(extracted.get("summary", summary))[:500]
+            raw_out   = extracted.get("outcome", outcome)
+            if raw_out in ("success", "partial", "failure"):
+                outcome = raw_out
+            raw_corr = extracted.get("corrections")
+            if raw_corr is not None:
+                try:
+                    corrections = int(raw_corr)
+                except (TypeError, ValueError):
+                    pass
+            approvals     = int(extracted.get("approvals") or 0)
+            anti_patterns = extracted.get("anti_patterns") or []
+            decisions     = extracted.get("decisions") or []
+            wiki_summary  = extracted.get("wiki_summary") or None
+            log.info("Local Azure extraction: outcome=%s corrections=%s wiki=%s",
+                     outcome, corrections, bool(wiki_summary))
+        except Exception as e:
+            log.error("Local Azure call failed: %s — delegating to server", e)
+            session_text_for_server = conversation_text
+    else:
+        log.info("No local Azure credentials — delegating extraction to server")
+        session_text_for_server = conversation_text
 
-    log.info("Extracted: outcome=%s corrections=%s approvals=%s anti_patterns=%d decisions=%d wiki=%s",
-             outcome, corrections, approvals, len(anti_patterns), len(decisions), bool(wiki_summary))
-
-    # Wrap session via Mnemo
-    ok = _wrap_session(session_id, project, summary, outcome, corrections, approvals)
-    if ok:
+    # Wrap session via Mnemo (server runs extraction if session_text provided)
+    result = _wrap_session(session_id, project, summary, outcome, corrections, approvals,
+                           session_text=session_text_for_server)
+    if result is not None:
         log.info("wrap_session completed successfully")
+        # If we delegated extraction to the server, read back the extracted data
+        if session_text_for_server:
+            wiki_summary  = result.get("wiki_summary") or wiki_summary
+            anti_patterns = result.get("anti_patterns") or anti_patterns
+            decisions     = result.get("decisions") or decisions
+            outcome       = result.get("outcome") or outcome
+            log.info("Server extraction: outcome=%s wiki=%s anti_patterns=%d",
+                     outcome, bool(wiki_summary), len(anti_patterns))
     else:
         log.error("wrap_session failed")
 
@@ -558,7 +592,7 @@ def main() -> None:
     if anti_patterns:
         _draft_lessons_from_anti_patterns(anti_patterns, project)
 
-    # Auto-save to wiki raw/auto/ if Azure deemed session wiki-worthy
+    # Auto-save to wiki raw/auto/ if session was wiki-worthy
     if wiki_summary and outcome in ("success", "partial"):
         _maybe_auto_save_wiki(session_id, cwd, wiki_summary, summary, project)
 
