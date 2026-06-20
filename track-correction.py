@@ -115,6 +115,7 @@ _mnemo_base = (
     or f"http://{os.getenv('MNEMO_HOST') or _env.get('MNEMO_HOST', 'localhost')}:{os.getenv('MNEMO_PORT') or _env.get('MNEMO_PORT', '80')}"
 ).rstrip("/")
 MCP_URL = _mnemo_base + "/mcp/"
+CLI_BASE = _mnemo_base
 
 _project: str | None = None
 if cwd:
@@ -132,20 +133,37 @@ if cwd:
         _project = _p.name or None
 
 # ---------------------------------------------------------------------------
-# Call log_user_correction + record_lesson_miss on Mnemo
+# Call log_user_correction (cold → /cli/*) + record_lesson_miss (hot → /mcp/)
 # ---------------------------------------------------------------------------
 
 try:
     import httpx
 
+    cli_headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if claude_session_id:
+        cli_headers["X-Session-Id"] = claude_session_id
+
+    mcp_headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {api_key}",
+    }
+
     with httpx.Client(timeout=2.0) as client:
+        # log_user_correction is cold → /cli/
+        client.post(
+            CLI_BASE + "/cli/log_user_correction",
+            headers=cli_headers,
+            json={},
+        )
+
+        # record_lesson_miss is hot → /mcp/ (still a model-facing tool)
         init_resp = client.post(
             MCP_URL,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {api_key}",
-            },
+            headers=mcp_headers,
             json={
                 "jsonrpc": "2.0", "id": 0, "method": "initialize",
                 "params": {
@@ -156,26 +174,9 @@ try:
             },
         )
         init_resp.raise_for_status()
-        mcp_session_id = init_resp.headers.get("mcp-session-id", "")
-
-        call_headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-            "Authorization": f"Bearer {api_key}",
-            "MCP-Session-Id": mcp_session_id,
-        }
+        mcp_headers["MCP-Session-Id"] = init_resp.headers.get("mcp-session-id", "")
         if claude_session_id:
-            call_headers["X-Session-Id"] = claude_session_id
-
-        client.post(
-            MCP_URL,
-            headers=call_headers,
-            json={
-                "jsonrpc": "2.0", "id": 1,
-                "method": "tools/call",
-                "params": {"name": "log_user_correction", "arguments": {}},
-            },
-        )
+            mcp_headers["X-Session-Id"] = claude_session_id
 
         miss_args: dict = {
             "tool_name": "unknown",
@@ -187,9 +188,9 @@ try:
             miss_args["project"] = _project
         client.post(
             MCP_URL,
-            headers=call_headers,
+            headers=mcp_headers,
             json={
-                "jsonrpc": "2.0", "id": 2,
+                "jsonrpc": "2.0", "id": 1,
                 "method": "tools/call",
                 "params": {"name": "record_lesson_miss", "arguments": miss_args},
             },
