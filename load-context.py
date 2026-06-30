@@ -196,6 +196,13 @@ if cwd and os.path.isdir(cwd):
     except Exception:
         pass
 
+# Fallback when there's no git context (e.g. claude launched from a non-repo dir like
+# ~): seed the query from the project/cwd name so search_wiki and query-aware retrieval
+# still fire instead of being skipped entirely. Engineers launching from $HOME were
+# getting zero wiki retrieval because _query stayed None.
+if not _query and project:
+    _query = project
+
 if session_id and _start_sha:
     try:
         _sidecar = str(Path(tempfile.gettempdir()) / f"mnemo-session-{session_id[:8]}.start")
@@ -322,6 +329,7 @@ def _parse_sse(body: str) -> dict:
 memories: list = []
 pending_memories: list = []
 active_lessons: list = []
+wiki_hits: list = []
 
 try:
     import httpx
@@ -353,20 +361,18 @@ try:
             "MCP-Session-Id": mcp_session_id,
             "X-Tool-Name": "auto_prime",
         }
+        # Attribute every prime call to the real Claude session. Without this the
+        # server fell back to Redis active-session (set only if worklog registered
+        # first), so auto_prime / search_wiki under-logged — making coverage look
+        # far lower than it is. session_id is always known here.
+        if session_id:
+            _mcp_headers["X-Session-Id"] = session_id
         if _pc_id:
             _mcp_headers["X-PC-Id"] = _pc_id
 
-        if session_id:
-            client.post(
-                MCP_URL,
-                headers=_mcp_headers,
-                json={
-                    "jsonrpc": "2.0", "id": 1,
-                    "method": "tools/call",
-                    "params": {"name": "register_claude_session",
-                               "arguments": {"claude_session_id": session_id}},
-                },
-            )
+        # NB: no register_claude_session call — it is a /cli-only endpoint, not an MCP
+        # tool, so the MCP tools/call always failed (wasted round-trip). Session
+        # attribution now rides the X-Session-Id header set above.
 
         args: dict = {"limit": 15, "scope": "both"}
         if _query:
@@ -393,6 +399,32 @@ try:
         if isinstance(content, list) and content:
             raw = content[0].get("text", "[]")
             memories = json.loads(raw) if isinstance(raw, str) else []
+
+        # Semantic wiki retrieval — runs 2nd (right after memories) so it fits inside the
+        # 5s hook budget even on slow network paths; it was the last of 6 calls before and
+        # got truncated for engineers. Best-effort: a wiki failure must not abort the prime
+        # (pending/lessons/brief still run). The fs-pointer scan later injects file PATHS;
+        # this surfaces page CONTENT by meaning, using the project/git-derived query.
+        if _query:
+            try:
+                wiki_resp = client.post(
+                    MCP_URL,
+                    headers=_mcp_headers,
+                    json={
+                        "jsonrpc": "2.0", "id": 5,
+                        "method": "tools/call",
+                        "params": {"name": "search_wiki",
+                                   "arguments": {"query": _query, "limit": 3}},
+                    },
+                )
+                wiki_resp.raise_for_status()
+                wiki_data = _parse_sse(wiki_resp.text)
+                wiki_content = wiki_data.get("result", {}).get("content", [])
+                if isinstance(wiki_content, list) and wiki_content:
+                    raw = wiki_content[0].get("text", "[]")
+                    wiki_hits = json.loads(raw) if isinstance(raw, str) else []
+            except Exception:
+                pass
 
         pending_args: dict = {"limit": 5, "scope": "both", "tags": ["pending_review"]}
         if project:
@@ -524,6 +556,31 @@ if pending_memories:
         lines.extend(pending_lines)
         if len(pending_lines) < len(pending_memories):
             lines.append(f"  (+{len(pending_memories) - len(pending_lines)} more — get_memories(tags=[\"pending_review\"]))")
+
+# Semantic wiki hits (page excerpts by meaning) rank above raw file pointers below.
+if wiki_hits:
+    wh_budget = 600
+    wh_used = 0
+    wh_lines = []
+    for w in wiki_hits:
+        body = w.get("preview") or w.get("content") or ""
+        # Skip leading YAML frontmatter (--- … ---) so the excerpt is prose, not tags.
+        if body.lstrip().startswith("---"):
+            _rest = body.lstrip()[3:]
+            _end = _rest.find("---")
+            if _end != -1:
+                body = _rest[_end + 3:]
+        excerpt = body.lstrip("# \n").replace("\n", " ").strip()[:180]
+        if not excerpt:
+            continue
+        line = f"    • {excerpt}"
+        if wh_used + len(line) > wh_budget:
+            break
+        wh_lines.append(line)
+        wh_used += len(line)
+    if wh_lines:
+        lines.append("  Wiki (semantic search — page excerpts):")
+        lines.extend(wh_lines)
 
 wiki_ptrs = _scan_wiki_pointers(project, cwd, _recent_paths)
 if wiki_ptrs:
