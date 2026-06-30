@@ -636,6 +636,12 @@ for _wr in _wiki_roots_active[:2]:
 if _pending_wikis:
     lines.append(f"  Wiki drafts pending compile: {', '.join(_pending_wikis)} — run compile-wiki from the wiki root to update")
 
+# Promote the fused memory+wiki retrieval primitive. recall() blends both into one
+# cited answer with gap analysis; without this signpost the model calls get_memories
+# and search_wiki separately and never uses the fusion (observed: 0 recall calls fleet-wide).
+if pitfall_lines or context_lines or wiki_hits:
+    lines.append('  → recall("your question") — one cited answer synthesized over memory + wiki; prefer it over separate get_memories + search_wiki for a specific question.')
+
 context = "\n".join(lines)
 
 # Prepend setup hint if ~/.mnemo.env is missing (new install or unconfigured machine)
