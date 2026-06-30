@@ -24,7 +24,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -41,7 +41,7 @@
             "type": "command",
             "command": "python3",
             "args": ["${CLAUDE_PLUGIN_ROOT}/track-correction.py"],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
