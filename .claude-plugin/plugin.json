@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3",
+            "command": "/usr/bin/python3",
             "args": ["${CLAUDE_PLUGIN_ROOT}/load-context.py"],
             "timeout": 5,
             "statusMessage": "Loading Mnemo context..."
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3",
+            "command": "/usr/bin/python3",
             "args": ["${CLAUDE_PLUGIN_ROOT}/guard-action.py"]
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3",
+            "command": "/usr/bin/python3",
             "args": ["${CLAUDE_PLUGIN_ROOT}/track-correction.py"],
             "timeout": 5
           }
