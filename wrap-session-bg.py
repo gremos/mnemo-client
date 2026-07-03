@@ -90,6 +90,7 @@ _mnemo_base = (
     or f"http://{_cfg('MNEMO_HOST', 'localhost')}:{_cfg('MNEMO_PORT', '80')}"
 ).rstrip("/")
 MCP_URL = _mnemo_base + "/mcp/"
+CLI_BASE = _mnemo_base
 
 # pc_id — read from plugin data dir (survives plugin updates)
 _plugin_data_dir = os.environ.get("CLAUDE_PLUGIN_DATA", os.path.expanduser("~/.mnemo"))
@@ -258,12 +259,18 @@ Return ONLY valid JSON with these fields:
   a pattern, solved a complex problem, changed infra) write a 2-4 sentence summary
   suitable for a technical wiki. Omit credentials, IPs, tokens, UUIDs. If the session was
   routine, trivial, or mostly exploratory with no concrete outcome, return null.
+- memory_helped (bool|null): did content retrieved from the memory system (session-start
+  context, get_memories/search_wiki results, cited anti-patterns or wiki pages) visibly
+  change what Claude did — avoided a repeat mistake, supplied the right file/pattern/
+  context faster? Judge only from what's actually visible in the log. null if no memory
+  content was retrieved at all, or if it's genuinely unclear either way — don't guess.
 
 Example: {"corrections": 1, "approvals": 2, "outcome": "success",
   "summary": "Implemented X feature and fixed Y bug.",
   "anti_patterns": ["Used git push --force instead of --force-with-lease"],
   "decisions": ["Chose PostgreSQL over Redis for persistence layer"],
-  "wiki_summary": "Fixed Docker networking issue by inserting ACCEPT rules at top of FORWARD chain before Cisco VPN drop rules."}
+  "wiki_summary": "Fixed Docker networking issue by inserting ACCEPT rules at top of FORWARD chain before Cisco VPN drop rules.",
+  "memory_helped": true}
 """
 
 def _call_azure(conversation_text: str) -> dict:
@@ -296,7 +303,7 @@ def _call_azure(conversation_text: str) -> dict:
     return result
 
 # ---------------------------------------------------------------------------
-# Mnemo MCP calls
+# Mnemo REST /cli/* calls (cold path) + MCP calls (hot path: save_memory)
 # ---------------------------------------------------------------------------
 
 def _parse_sse(body: str) -> dict:
@@ -309,49 +316,35 @@ def _parse_sse(body: str) -> dict:
     return {}
 
 
+def _cli_headers() -> dict:
+    h = {"Content-Type": "application/json", "Authorization": f"Bearer {MNEMO_KEY}"}
+    if PC_ID:
+        h["X-PC-Id"] = PC_ID
+    return h
+
+
 def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
                   corrections: int | None, approvals: int,
-                  session_text: str | None = None) -> dict | None:
-    """Call wrap_session MCP tool. Returns parsed result dict on success, None on failure."""
+                  session_text: str | None = None,
+                  memory_helped: bool | None = None) -> dict | None:
+    """Call /cli/register_claude_session + /cli/wrap_session REST endpoints."""
     try:
         import httpx
     except ImportError:
         log.error("httpx not installed")
         return None
 
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "Authorization": f"Bearer {MNEMO_KEY}",
-    }
-    if PC_ID:
-        headers["X-PC-Id"] = PC_ID
-
+    timeout = 30 if session_text else 8
     try:
-        # Increase timeout when session_text is provided — server calls Azure OpenAI
-        timeout = 30 if session_text else 8
         with httpx.Client(timeout=timeout) as client:
-            # Initialize MCP session
-            init = client.post(MCP_URL, headers=headers, json={
-                "jsonrpc": "2.0", "id": 0, "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "mnemo-mend-bg", "version": "1.0"},
-                },
-            })
-            init.raise_for_status()
-            mcp_session = init.headers.get("mcp-session-id", "")
-            headers["MCP-Session-Id"] = mcp_session
+            # Register session so wrap_session attributes the episode correctly
+            client.post(
+                CLI_BASE + "/cli/register_claude_session",
+                headers=_cli_headers(),
+                json={"claude_session_id": session_id},
+            )
 
-            # Register the claude session so wrap_session embeds the session_id
-            client.post(MCP_URL, headers=headers, json={
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "register_claude_session",
-                           "arguments": {"claude_session_id": session_id}},
-            })
-
-            arguments: dict = {
+            body: dict = {
                 "summary": summary,
                 "outcome": outcome,
                 "corrections": corrections,
@@ -360,28 +353,22 @@ def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
                 "tags": ["auto-mend"],
             }
             if session_text:
-                arguments["session_text"] = session_text
+                body["session_text"] = session_text
+            if memory_helped is not None:
+                body["memory_helped"] = memory_helped
 
-            # Call wrap_session
-            resp = client.post(MCP_URL, headers=headers, json={
-                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                "params": {"name": "wrap_session", "arguments": arguments},
-            })
+            resp = client.post(
+                CLI_BASE + "/cli/wrap_session",
+                headers=_cli_headers(),
+                json=body,
+            )
             resp.raise_for_status()
-            data = _parse_sse(resp.text)
-            log.info("wrap_session response: %s", data.get("result", {}).get("content", "")[:200])
-            # Parse the result content (FastMCP wraps result in content[0].text as JSON)
-            result_obj: dict = {}
-            try:
-                content_list = data.get("result", {}).get("content", [])
-                if content_list and isinstance(content_list[0], dict):
-                    result_obj = json.loads(content_list[0].get("text", "{}"))
-            except Exception:
-                pass
+            result_obj = resp.json()
+            log.info("wrap_session response: %s", str(result_obj)[:200])
             return result_obj
 
     except Exception as e:
-        log.error("MCP wrap_session failed: %s", e)
+        log.error("wrap_session failed: %s", e)
         return None
 
 # ---------------------------------------------------------------------------
@@ -427,36 +414,16 @@ def _extract_ap_trigger(description: str) -> str | None:
 
 
 def _draft_lessons_from_anti_patterns(anti_patterns: list[str], project: str) -> None:
-    """Call draft_lesson for each anti-pattern extracted by the LLM. Fail-silent.
-
-    Action-shaped anti-patterns get delivery=jit_hook; reasoning-shaped ones get
-    delivery=claude_md. Server auto-promotes via quality gate — no client-side
-    confirm_lesson needed.
-    """
+    """POST /cli/draft_lesson for each anti-pattern. Fail-silent."""
     if not anti_patterns or not MNEMO_KEY:
         return
     try:
         import httpx
     except ImportError:
         return
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "Authorization": f"Bearer {MNEMO_KEY}",
-    }
-    if PC_ID:
-        headers["X-PC-Id"] = PC_ID
     try:
         with httpx.Client(timeout=8) as client:
-            init = client.post(MCP_URL, headers=headers, json={
-                "jsonrpc": "2.0", "id": 0, "method": "initialize",
-                "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                           "clientInfo": {"name": "mnemo-mend-bg", "version": "2.1"}},
-            })
-            init.raise_for_status()
-            headers["MCP-Session-Id"] = init.headers.get("mcp-session-id", "")
-            call_id = 1
-            for ap in anti_patterns[:5]:  # cap at 5 per session
+            for ap in anti_patterns[:5]:
                 directive = f"Avoid: {ap[:200]}"
                 rationale = "Auto-drafted from session anti-pattern extraction."
                 trigger = _extract_ap_trigger(ap)
@@ -465,34 +432,25 @@ def _draft_lessons_from_anti_patterns(anti_patterns: list[str], project: str) ->
                     [{"tool_name": "Bash", "trigger_kind": "bash_substr", "trigger_pattern": trigger}]
                     if trigger else []
                 )
-                resp = client.post(MCP_URL, headers=headers, json={
-                    "jsonrpc": "2.0", "id": call_id, "method": "tools/call",
-                    "params": {"name": "draft_lesson", "arguments": {
+                resp = client.post(
+                    CLI_BASE + "/cli/draft_lesson",
+                    headers=_cli_headers(),
+                    json={
                         "directive": directive,
                         "rationale": rationale,
                         "delivery": delivery,
                         "triggers": triggers,
                         "severity": "warn",
                         "project": project,
-                    }},
-                })
-                call_id += 1
-                data = _parse_sse(resp.text) if resp.ok else {}
-                content = data.get("result", {}).get("content", [])
-                raw = content[0].get("text", "{}") if content else "{}"
-                try:
-                    result = json.loads(raw)
-                except Exception:
-                    result = {}
-
-                lesson_id = result.get("lesson_id")
-                if lesson_id and result.get("ok") and not result.get("duplicate"):
-                    state = result.get("state", "pending")
-                    reason = result.get("auto_promotion_reason", "unknown")
-                    log.info(
-                        "Drafted lesson %s → %s [%s] (%s)",
-                        lesson_id[:8], state, reason, delivery,
-                    )
+                    },
+                )
+                if resp.ok:
+                    result = resp.json()
+                    lesson_id = result.get("lesson_id")
+                    if lesson_id and result.get("ok") and not result.get("duplicate"):
+                        state = result.get("state", "pending")
+                        reason = result.get("auto_promotion_reason", "unknown")
+                        log.info("Drafted lesson %s → %s [%s] (%s)", lesson_id[:8], state, reason, delivery)
 
         log.info("Drafted %d lesson(s) from anti_patterns", min(len(anti_patterns), 5))
     except Exception as e:
@@ -544,6 +502,7 @@ def main() -> None:
     outcome = "partial"
     corrections = None
     approvals = 0
+    memory_helped: bool | None = None
     session_text_for_server: str | None = None
 
     if AZURE_ENDPOINT and AZURE_API_KEY:
@@ -563,8 +522,11 @@ def main() -> None:
             anti_patterns = extracted.get("anti_patterns") or []
             decisions     = extracted.get("decisions") or []
             wiki_summary  = extracted.get("wiki_summary") or None
-            log.info("Local Azure extraction: outcome=%s corrections=%s wiki=%s",
-                     outcome, corrections, bool(wiki_summary))
+            raw_helped = extracted.get("memory_helped")
+            if isinstance(raw_helped, bool):
+                memory_helped = raw_helped
+            log.info("Local Azure extraction: outcome=%s corrections=%s wiki=%s memory_helped=%s",
+                     outcome, corrections, bool(wiki_summary), memory_helped)
         except Exception as e:
             log.error("Local Azure call failed: %s — delegating to server", e)
             session_text_for_server = conversation_text
@@ -574,7 +536,7 @@ def main() -> None:
 
     # Wrap session via Mnemo (server runs extraction if session_text provided)
     result = _wrap_session(session_id, project, summary, outcome, corrections, approvals,
-                           session_text=session_text_for_server)
+                           session_text=session_text_for_server, memory_helped=memory_helped)
     if result is not None:
         log.info("wrap_session completed successfully")
         # If we delegated extraction to the server, read back the extracted data
