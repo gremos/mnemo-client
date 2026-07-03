@@ -25,7 +25,7 @@ try:
 except Exception:
     sys.exit(0)
 
-user_prompt: str = payload.get("user_prompt", "")
+user_prompt: str = payload.get("prompt", "")
 if not user_prompt or not user_prompt.strip():
     sys.exit(0)
 
