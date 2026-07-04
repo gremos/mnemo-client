@@ -323,49 +323,86 @@ def _cli_headers() -> dict:
     return h
 
 
+def _http_post(url: str, headers: dict, body: dict, timeout: float) -> tuple[int, dict, dict]:
+    """POST JSON via the stdlib (urllib), never httpx.
+
+    This script is launched by wrap-session.sh via bare `python3` on PATH — whatever
+    interpreter that resolves to depends on which project's shell/venv was active when
+    Claude Code started, and httpx is not guaranteed to be installed there (it's not a
+    dependency of the calling project, only of Mnemo's own scripts). That produced
+    intermittent "httpx not installed" failures depending on which directory a session
+    happened to start from. urllib ships with every Python3, so this removes the
+    dependency entirely instead of requiring a specific venv.
+
+    Returns (status_code, response_headers, json_body). Mirrors what callers previously
+    did with httpx's resp.status_code / resp.headers / resp.json() — including on HTTP
+    error responses, so callers can inspect the body without a try/except around a
+    raise_for_status().
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    data = _json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={**headers, "Content-Type": "application/json"}, method="POST",
+    )
+    def _try_json(raw: bytes) -> dict:
+        # MCP's /mcp/ endpoint replies as an SSE stream ("data: {...}"), not plain JSON;
+        # callers that only need the status/headers (e.g. session-id) never parse this,
+        # so failing to decode isn't fatal — return {} rather than raising.
+        try:
+            return _json.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            # Lowercase keys: HTTP header names are case-insensitive but a plain dict
+            # isn't — httpx's Headers (what this replaces) hid that distinction.
+            return resp.status, {k.lower(): v for k, v in resp.headers.items()}, _try_json(raw)
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, _try_json(raw)
+
+
 def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
                   corrections: int | None, approvals: int,
                   session_text: str | None = None,
                   memory_helped: bool | None = None) -> dict | None:
     """Call /cli/register_claude_session + /cli/wrap_session REST endpoints."""
-    try:
-        import httpx
-    except ImportError:
-        log.error("httpx not installed")
-        return None
-
     timeout = 30 if session_text else 8
     try:
-        with httpx.Client(timeout=timeout) as client:
-            # Register session so wrap_session attributes the episode correctly
-            client.post(
-                CLI_BASE + "/cli/register_claude_session",
-                headers=_cli_headers(),
-                json={"claude_session_id": session_id},
-            )
+        # Register session so wrap_session attributes the episode correctly
+        _http_post(
+            CLI_BASE + "/cli/register_claude_session",
+            _cli_headers(),
+            {"claude_session_id": session_id},
+            timeout,
+        )
 
-            body: dict = {
-                "summary": summary,
-                "outcome": outcome,
-                "corrections": corrections,
-                "approvals": approvals,
-                "project": project,
-                "tags": ["auto-mend"],
-            }
-            if session_text:
-                body["session_text"] = session_text
-            if memory_helped is not None:
-                body["memory_helped"] = memory_helped
+        body: dict = {
+            "summary": summary,
+            "outcome": outcome,
+            "corrections": corrections,
+            "approvals": approvals,
+            "project": project,
+            "tags": ["auto-mend"],
+        }
+        if session_text:
+            body["session_text"] = session_text
+        if memory_helped is not None:
+            body["memory_helped"] = memory_helped
 
-            resp = client.post(
-                CLI_BASE + "/cli/wrap_session",
-                headers=_cli_headers(),
-                json=body,
-            )
-            resp.raise_for_status()
-            result_obj = resp.json()
-            log.info("wrap_session response: %s", str(result_obj)[:200])
-            return result_obj
+        status, _headers, result_obj = _http_post(
+            CLI_BASE + "/cli/wrap_session", _cli_headers(), body, timeout,
+        )
+        if status >= 400:
+            log.error("wrap_session failed: HTTP %d %s", status, str(result_obj)[:200])
+            return None
+        log.info("wrap_session response: %s", str(result_obj)[:200])
+        return result_obj
 
     except Exception as e:
         log.error("wrap_session failed: %s", e)
@@ -418,39 +455,34 @@ def _draft_lessons_from_anti_patterns(anti_patterns: list[str], project: str) ->
     if not anti_patterns or not MNEMO_KEY:
         return
     try:
-        import httpx
-    except ImportError:
-        return
-    try:
-        with httpx.Client(timeout=8) as client:
-            for ap in anti_patterns[:5]:
-                directive = f"Avoid: {ap[:200]}"
-                rationale = "Auto-drafted from session anti-pattern extraction."
-                trigger = _extract_ap_trigger(ap)
-                delivery = "jit_hook" if trigger else "claude_md"
-                triggers = (
-                    [{"tool_name": "Bash", "trigger_kind": "bash_substr", "trigger_pattern": trigger}]
-                    if trigger else []
-                )
-                resp = client.post(
-                    CLI_BASE + "/cli/draft_lesson",
-                    headers=_cli_headers(),
-                    json={
-                        "directive": directive,
-                        "rationale": rationale,
-                        "delivery": delivery,
-                        "triggers": triggers,
-                        "severity": "warn",
-                        "project": project,
-                    },
-                )
-                if resp.ok:
-                    result = resp.json()
-                    lesson_id = result.get("lesson_id")
-                    if lesson_id and result.get("ok") and not result.get("duplicate"):
-                        state = result.get("state", "pending")
-                        reason = result.get("auto_promotion_reason", "unknown")
-                        log.info("Drafted lesson %s → %s [%s] (%s)", lesson_id[:8], state, reason, delivery)
+        for ap in anti_patterns[:5]:
+            directive = f"Avoid: {ap[:200]}"
+            rationale = "Auto-drafted from session anti-pattern extraction."
+            trigger = _extract_ap_trigger(ap)
+            delivery = "jit_hook" if trigger else "claude_md"
+            triggers = (
+                [{"tool_name": "Bash", "trigger_kind": "bash_substr", "trigger_pattern": trigger}]
+                if trigger else []
+            )
+            status, _headers, result = _http_post(
+                CLI_BASE + "/cli/draft_lesson",
+                _cli_headers(),
+                {
+                    "directive": directive,
+                    "rationale": rationale,
+                    "delivery": delivery,
+                    "triggers": triggers,
+                    "severity": "warn",
+                    "project": project,
+                },
+                8,
+            )
+            if status < 400:
+                lesson_id = result.get("lesson_id")
+                if lesson_id and result.get("ok") and not result.get("duplicate"):
+                    state = result.get("state", "pending")
+                    reason = result.get("auto_promotion_reason", "unknown")
+                    log.info("Drafted lesson %s → %s [%s] (%s)", lesson_id[:8], state, reason, delivery)
 
         log.info("Drafted %d lesson(s) from anti_patterns", min(len(anti_patterns), 5))
     except Exception as e:
@@ -670,32 +702,33 @@ def _get_session_commits(cwd: str, session_id: str) -> list[str]:
 def _save_wiki_event(event_type: str, project: str) -> None:
     """Log a wiki event to Mnemo so analyze_memory_performance can track rates."""
     try:
-        import httpx as _httpx
         headers = {
-            "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "Authorization": f"Bearer {MNEMO_KEY}",
         }
         if PC_ID:
             headers["X-PC-Id"] = PC_ID
-        with _httpx.Client(timeout=5) as c:
-            init = c.post(MCP_URL, headers=headers, json={
-                "jsonrpc": "2.0", "id": 0, "method": "initialize",
-                "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                           "clientInfo": {"name": "mnemo-mend-bg-wiki", "version": "1.0"}},
-            })
-            init.raise_for_status()
-            headers["MCP-Session-Id"] = init.headers.get("mcp-session-id", "")
-            c.post(MCP_URL, headers=headers, json={
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "save_memory", "arguments": {
-                    "content": f"Wiki event: {event_type}",
-                    "type": "note",
-                    "importance": 3,
-                    "project": project,
-                    "tags": ["wiki_event", event_type],
-                }},
-            })
+
+        status, init_headers, _body = _http_post(MCP_URL, headers, {
+            "jsonrpc": "2.0", "id": 0, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                       "clientInfo": {"name": "mnemo-mend-bg-wiki", "version": "1.0"}},
+        }, 5)
+        if status >= 400:
+            return
+        headers["MCP-Session-Id"] = init_headers.get("mcp-session-id", "")
+        _http_post(MCP_URL, headers, {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "save_memory", "arguments": {
+                # save_memory rejects content under 8 words — a bare "Wiki event: X"
+                # (4 words) always failed the quality gate, so this event never saved.
+                "content": f"Wiki event: {event_type} recorded for project {project} via auto-mend.",
+                "memory_type": "note",
+                "importance": 3,
+                "project": project,
+                "tags": ["wiki_event", event_type],
+            }},
+        }, 5)
     except Exception as e:
         log.debug("wiki event save failed (non-critical): %s", e)
 
