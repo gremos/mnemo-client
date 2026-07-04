@@ -1,0 +1,18 @@
+{
+  "id": "mnemo-client",
+  "name": "mnemo-client",
+  "kind": "platform",
+  "portfolio": "personal",
+
+  "project": {"language": "python", "remoteClass": "github", "team": false},
+  "ship": {
+    "autoship": true,
+    "autopush": true,
+    "autopr": true,
+    "prStrategy": "github",
+    "autoMerge": true,
+    "requireSecretScanner": false,
+    "maxChangedFiles": 30,
+    "maxDiffLines": 800
+  }
+}
