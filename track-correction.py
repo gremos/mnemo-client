@@ -30,7 +30,6 @@ if not user_prompt or not user_prompt.strip():
     sys.exit(0)
 
 claude_session_id: str = payload.get("session_id", "")
-cwd: str = payload.get("cwd", "")
 
 # ---------------------------------------------------------------------------
 # Correction heuristic
@@ -114,87 +113,46 @@ _mnemo_base = (
     or os.getenv("MCP_URL", "").replace("/mcp/", "").rstrip("/")
     or f"http://{os.getenv('MNEMO_HOST') or _env.get('MNEMO_HOST', 'localhost')}:{os.getenv('MNEMO_PORT') or _env.get('MNEMO_PORT', '80')}"
 ).rstrip("/")
-MCP_URL = _mnemo_base + "/mcp/"
 CLI_BASE = _mnemo_base
-
-_project: str | None = None
-if cwd:
-    import pathlib as _pathlib
-    _p = _pathlib.Path(cwd)
-    for _parent in [_p, *_p.parents]:
-        _mf = _parent / ".mnemo-project"
-        if _mf.exists():
-            try:
-                _project = _mf.read_text().strip() or None
-            except Exception:
-                pass
-            break
-    if not _project:
-        _project = _p.name or None
+# Note: project no longer resolved here — log_user_correction infers it server-side
+# from the recovered tool action's session, which is more reliable than a cwd guess.
 
 # ---------------------------------------------------------------------------
-# Call log_user_correction (cold → /cli/*) + record_lesson_miss (hot → /mcp/)
+# Call log_user_correction (cold → /cli/*) ONLY.
+#
+# We deliberately do NOT also call record_lesson_miss here. That path was invoked
+# with tool_name="unknown" and normalized_action=<the user's prompt prose>, which
+# can never yield a derivable trigger — it only ever minted unvalidatable
+# soft_instructions that clog the lesson store and never close the RL loop.
+#
+# log_user_correction already does the right thing server-side: it recovers the
+# REAL last tool action for the session and, when that action is genuinely
+# triggerable, drafts a lesson_miss with a specific trigger via _derive_triggers —
+# the only path that can produce a guardrail able to pass replay precision.
+#
+# Uses urllib (stdlib), never httpx: this hook is launched by bare `python3` on
+# PATH, so httpx is not guaranteed importable in the ambient venv (the same trap
+# that silently broke wrap-session-bg.py). urllib always ships with Python3.
 # ---------------------------------------------------------------------------
 
 try:
-    import httpx
+    import urllib.request
 
-    cli_headers = {
+    headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
     if claude_session_id:
-        cli_headers["X-Session-Id"] = claude_session_id
+        headers["X-Session-Id"] = claude_session_id
 
-    mcp_headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "Authorization": f"Bearer {api_key}",
-    }
-
-    with httpx.Client(timeout=2.0) as client:
-        # log_user_correction is cold → /cli/
-        client.post(
-            CLI_BASE + "/cli/log_user_correction",
-            headers=cli_headers,
-            json={},
-        )
-
-        # record_lesson_miss is hot → /mcp/ (still a model-facing tool)
-        init_resp = client.post(
-            MCP_URL,
-            headers=mcp_headers,
-            json={
-                "jsonrpc": "2.0", "id": 0, "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "correction-detect-hook", "version": "1.0"},
-                },
-            },
-        )
-        init_resp.raise_for_status()
-        mcp_headers["MCP-Session-Id"] = init_resp.headers.get("mcp-session-id", "")
-        if claude_session_id:
-            mcp_headers["X-Session-Id"] = claude_session_id
-
-        miss_args: dict = {
-            "tool_name": "unknown",
-            "normalized_action": user_prompt.strip()[:120],
-            "correction_text": user_prompt.strip()[:400],
-            "session_id": claude_session_id or "unknown",
-        }
-        if _project:
-            miss_args["project"] = _project
-        client.post(
-            MCP_URL,
-            headers=mcp_headers,
-            json={
-                "jsonrpc": "2.0", "id": 1,
-                "method": "tools/call",
-                "params": {"name": "record_lesson_miss", "arguments": miss_args},
-            },
-        )
+    req = urllib.request.Request(
+        CLI_BASE + "/cli/log_user_correction",
+        data=b"{}",
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=2.0):
+        pass
 
 except Exception:
     pass  # fail-open
