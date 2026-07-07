@@ -312,14 +312,18 @@ def _session_text(jsonl_path: Path) -> str:
     return "\n\n".join(parts)
 
 
-def _trigger_llm(project: str | None, session_id: str, cwd: str | None, n_regex: int, jsonl: Path) -> bool:
+def _trigger_llm(project: str | None, session_id: str, cwd: str | None, n_regex: int, jsonl: Path):
+    """Returns None when there's nothing substantive to extract (a legitimate no-op,
+    NOT a failure), True when both posts succeeded, False when a post failed (e.g. a
+    503 rate-limit). The caller uses False to withhold the session's done-marker so it
+    retries next run instead of being silently consumed."""
     text = _session_text(jsonl)
     if len(text) < 200:
-        return False  # nothing substantive to extract
+        return None  # nothing substantive to extract — not a failure
     reg = {"claude_session_id": session_id, "origin": "correction_sweep"}
     if project:
         reg["project"] = project
-    _post("/cli/register_claude_session", reg, session_id)
+    ok_reg = _post("/cli/register_claude_session", reg, session_id)
     wrap = {
         "summary": "correction sweep (background)",
         "outcome": "partial",
@@ -329,7 +333,8 @@ def _trigger_llm(project: str | None, session_id: str, cwd: str | None, n_regex:
         "auto_captured": True,
         "force_extract": True,           # run LLM extraction on every session, any language
     }
-    return _post("/cli/wrap_session", wrap, session_id)
+    ok_wrap = _post("/cli/wrap_session", wrap, session_id)
+    return ok_reg and ok_wrap
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +370,10 @@ def main() -> int:
         cwd = _cwd_of(jsonl)
         project = _project_for(cwd)
 
+        # Track post failures (e.g. 503 rate-limit) so a throttled session is NOT
+        # marked done — it must retry next run instead of being silently consumed.
+        session_failed = False
+
         # Floor (regex): precise, action-attributed misses recorded immediately.
         for pr in pairs:
             if DRY_RUN:
@@ -374,6 +383,8 @@ def main() -> int:
                 recorded += 1
             elif _post_miss(project, session_id, pr):
                 recorded += 1
+            else:
+                session_failed = True
 
         # Primary (LLM): run server-side extraction on EVERY substantive session —
         # language-agnostic, and the only path that catches corrections the regex
@@ -381,10 +392,16 @@ def main() -> int:
         if DRY_RUN:
             log.info("[dry-run] %s | would trigger LLM extraction (regex_corr=%d)",
                      session_id[:8], len(pairs))
-        elif _trigger_llm(project, session_id, cwd, len(pairs), jsonl):
-            llm_jobs += 1
+        else:
+            llm = _trigger_llm(project, session_id, cwd, len(pairs), jsonl)
+            if llm is True:
+                llm_jobs += 1
+            elif llm is False:
+                session_failed = True
+            # llm is None → nothing to extract; not a failure
 
-        if not DRY_RUN:
+        # Mark done only if nothing failed; else leave unmarked to retry next run.
+        if not DRY_RUN and not session_failed:
             try:
                 marker.write_text(str(int(now)))
             except Exception:
