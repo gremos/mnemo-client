@@ -275,6 +275,8 @@ _MAX_MSG = 3000
 
 
 def _session_text(jsonl_path: Path) -> str:
+    """Build the extraction payload. Crucially includes tool COMMANDS, not just prose:
+    the server LLM can only attribute a corrected command verbatim if it sees it."""
     parts: list[str] = []
     total = 0
     try:
@@ -289,15 +291,22 @@ def _session_text(jsonl_path: Path) -> str:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if obj.get("type") not in ("user", "assistant"):
+        t = obj.get("type")
+        if t not in ("user", "assistant"):
             continue
-        txt = _text_of((obj.get("message", {}) or {}).get("content", "")).strip()
-        if len(txt) < 5:
-            continue
-        prefix = "USER" if obj["type"] == "user" else "ASSISTANT"
-        chunk = f"{prefix}: {txt[:_MAX_MSG]}"
-        parts.append(chunk)
-        total += len(chunk)
+        content = (obj.get("message", {}) or {}).get("content", "")
+        chunks: list[str] = []
+        txt = _text_of(content).strip()
+        if len(txt) >= 5:
+            chunks.append(f"{'USER' if t == 'user' else 'ASSISTANT'}: {txt[:_MAX_MSG]}")
+        if t == "assistant":
+            for name, tin in _tool_uses(content):
+                na = normalize_action(name, tin)
+                if na:
+                    chunks.append(f"ASSISTANT [ran {name}]: {na[:_MAX_MSG]}")
+        for chunk in chunks:
+            parts.append(chunk)
+            total += len(chunk)
         if total > _MAX_TEXT:
             break
     return "\n\n".join(parts)
@@ -314,10 +323,11 @@ def _trigger_llm(project: str | None, session_id: str, cwd: str | None, n_regex:
     wrap = {
         "summary": "correction sweep (background)",
         "outcome": "partial",
-        "corrections": n_regex,          # seeds the server extraction gate
+        "corrections": n_regex,          # hint; LLM computes the authoritative count
         "project": project,
         "session_text": text,
         "auto_captured": True,
+        "force_extract": True,           # run LLM extraction on every session, any language
     }
     return _post("/cli/wrap_session", wrap, session_id)
 
@@ -339,7 +349,7 @@ def main() -> int:
         return 0
 
     now = time.time()
-    swept = recorded = sessions = 0
+    swept = recorded = sessions = llm_jobs = 0
     for jsonl in sorted(projects_dir.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
         if sessions >= MAX_SESSIONS:
             break
@@ -352,32 +362,36 @@ def main() -> int:
             continue
         sessions += 1
         pairs = pair_corrections(jsonl)
-        if pairs:
-            cwd = _cwd_of(jsonl)
-            project = _project_for(cwd)
-            for pr in pairs:
-                if DRY_RUN:
-                    log.info("[dry-run] %s | proj=%s | tool=%s | action=%r | corr=%r",
-                             session_id[:8], project, pr["tool_name"],
-                             pr["normalized_action"][:80], pr["correction_text"][:60])
-                    recorded += 1
-                elif _post_miss(project, session_id, pr):
-                    recorded += 1
-            # LLM refinement pass (language-agnostic, higher precision): only for
-            # correction-bearing sessions the regex flagged — bounds Azure cost.
+        cwd = _cwd_of(jsonl)
+        project = _project_for(cwd)
+
+        # Floor (regex): precise, action-attributed misses recorded immediately.
+        for pr in pairs:
             if DRY_RUN:
-                log.info("[dry-run] %s | would trigger LLM wrap (corrections=%d)",
-                         session_id[:8], len(pairs))
-            else:
-                _trigger_llm(project, session_id, cwd, len(pairs), jsonl)
+                log.info("[dry-run] %s | proj=%s | tool=%s | action=%r | corr=%r",
+                         session_id[:8], project, pr["tool_name"],
+                         pr["normalized_action"][:80], pr["correction_text"][:60])
+                recorded += 1
+            elif _post_miss(project, session_id, pr):
+                recorded += 1
+
+        # Primary (LLM): run server-side extraction on EVERY substantive session —
+        # language-agnostic, and the only path that catches corrections the regex
+        # missed. force_extract bypasses the size/pre-count gate.
+        if DRY_RUN:
+            log.info("[dry-run] %s | would trigger LLM extraction (regex_corr=%d)",
+                     session_id[:8], len(pairs))
+        elif _trigger_llm(project, session_id, cwd, len(pairs), jsonl):
+            llm_jobs += 1
+
         if not DRY_RUN:
             try:
                 marker.write_text(str(int(now)))
             except Exception:
                 pass
         swept += 1
-    log.info("sweep done: sessions_examined=%d swept=%d corrections_recorded=%d dry_run=%s",
-             sessions, swept, recorded, DRY_RUN)
+    log.info("sweep done: sessions_examined=%d swept=%d regex_misses=%d llm_jobs=%d dry_run=%s",
+             sessions, swept, recorded, llm_jobs, DRY_RUN)
     return 0
 
 
