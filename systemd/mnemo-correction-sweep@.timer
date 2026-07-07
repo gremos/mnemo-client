@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly Mnemo correction sweep for %i
+Documentation=https://github.com/gremos/mnemo-client
+
+[Timer]
+OnCalendar=hourly
+# Spread the fleet out so 4 profiles don't hit the server at :00 together.
+RandomizedDelaySec=300
+# Run a missed sweep after downtime.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

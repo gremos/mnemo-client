@@ -1,0 +1,15 @@
+[Unit]
+Description=Mnemo bilingual correction sweep for %i
+Documentation=https://github.com/gremos/mnemo-client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+Environment=HOME=/home/%i
+# Reads config from ~/.claude/skills/mnemo/.env (MNEMO_HOOK_KEY / MCP_URL).
+ExecStart=/usr/bin/python3 /home/%i/.mnemo/bin/mnemo-correction-sweep.py
+Nice=10
+# Never let a sweep failure spam the journal or block anything — it's best-effort.
+SuccessExitStatus=0 1
