@@ -89,99 +89,41 @@ if cwd:
         project = _p.name or None
 
 # ---------------------------------------------------------------------------
-# Call evaluate_action
+# Static catastrophic-command guard (v2.2 — RL enforcement removed).
+#
+# The learned/statistical guardrail loop (server evaluate_action) is being retired:
+# it caught 0 repeats in its lifetime and every past correction was benign, never
+# "must-block". This hook no longer calls the server. Instead it surfaces a
+# NON-BLOCKING warning for a tiny, tightly-scoped set of irreversible commands.
+# It NEVER denies (never exits 2) — a false block gets the hook hand-disabled per
+# VM and destroys fleet parity. Pure safety reminder, zero server round-trip.
 # ---------------------------------------------------------------------------
+import re
 
-def _parse_sse(body: str) -> dict:
-    for line in body.splitlines():
-        if line.startswith("data: "):
-            return json.loads(line[6:])
-    return {}
+_CATASTROPHIC = [
+    (r"\brm\s+-[a-z]*r[a-z]*\s+(/|~|/\*|\$HOME)\b", "a recursive delete of a root/home path"),
+    (r"\bgit\s+push\b.*\b(-f|--force)\b.*\b(main|master|prod|production|release)\b",
+     "a force-push to a protected branch"),
+    (r"\bdrop\s+database\b", "a DROP DATABASE"),
+    (r"\bmkfs\b", "a filesystem format"),
+    (r"\bdd\s+if=.*\bof=/dev/", "a raw write to a block device"),
+    (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", "a fork bomb"),
+]
 
-try:
-    import httpx
+_probe = tool_input.get("command", "") if tool_name == "Bash" else ""
 
-    with httpx.Client(timeout=0.8) as client:
-        init_resp = client.post(
-            MCP_URL,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {api_key}",
-            },
-            json={
-                "jsonrpc": "2.0", "id": 0, "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "pre-tool-hook", "version": "2.1"},
-                },
-            },
-        )
-        init_resp.raise_for_status()
-        mcp_session_id = init_resp.headers.get("mcp-session-id", "")
-
-        mcp_headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-            "Authorization": f"Bearer {api_key}",
-            "MCP-Session-Id": mcp_session_id,
+for _pat, _why in _CATASTROPHIC:
+    if _probe and re.search(_pat, _probe, re.IGNORECASE):
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": (
+                    f"**Mnemo — catastrophic-command guard:** this looks like {_why}. "
+                    "It is irreversible — double-check the target before running."
+                ),
+            }
         }
-
-        args: dict = {
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "session_id": session_id,
-        }
-        if project:
-            args["project"] = project
-
-        eval_resp = client.post(
-            MCP_URL,
-            headers=mcp_headers,
-            json={
-                "jsonrpc": "2.0", "id": 1,
-                "method": "tools/call",
-                "params": {"name": "evaluate_action", "arguments": args},
-            },
-        )
-        eval_resp.raise_for_status()
-
-        data = _parse_sse(eval_resp.text)
-        content = data.get("result", {}).get("content", [])
-        result: dict = {}
-        if isinstance(content, list) and content:
-            raw = content[0].get("text", "{}")
-            result = json.loads(raw) if isinstance(raw, str) else {}
-
-except Exception:
-    sys.exit(0)
-
-# ---------------------------------------------------------------------------
-# Act on decision
-# ---------------------------------------------------------------------------
-
-decision = result.get("decision", "allow")
-directive = result.get("directive") or ""
-rationale = result.get("rationale") or ""
-
-if decision == "deny":
-    reason = directive or "Lesson block: action not permitted."
-    if rationale:
-        reason += f"\n{rationale}"
-    sys.stderr.write(f"[Mnemo] BLOCKED: {reason}\n")
-    sys.exit(2)
-
-if decision == "warn" and directive:
-    lines = ["**Mnemo — lesson directive:**\n", f"  {directive}"]
-    if rationale:
-        lines.append(f"  _{rationale}_")
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": "\n".join(lines),
-        }
-    }
-    sys.stdout.write(json.dumps(out))
+        sys.stdout.write(json.dumps(out))
+        break
 
 sys.exit(0)
