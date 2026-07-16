@@ -101,8 +101,10 @@ if cwd:
 import re
 
 _CATASTROPHIC = [
-    (r"\brm\s+-[a-z]*r[a-z]*\s+(/|~|/\*|\$HOME)\b", "a recursive delete of a root/home path"),
-    (r"\bgit\s+push\b.*\b(-f|--force)\b.*\b(main|master|prod|production|release)\b",
+    # \b doesn't fire next to punctuation-only tokens (bare "/", "~", "-f", "--force")
+    # since \b needs a word char on one side -- (?=\s|$) anchors on whitespace/EOL instead.
+    (r"\brm\s+-[a-z]*r[a-z]*\s+(/|~|/\*|\$HOME)(?=\s|$)", "a recursive delete of a root/home path"),
+    (r"\bgit\s+push\b.*(?:^|\s)(-f|--force)(?=\s|$).*\b(main|master|prod|production|release)\b",
      "a force-push to a protected branch"),
     (r"\bdrop\s+database\b", "a DROP DATABASE"),
     (r"\bmkfs\b", "a filesystem format"),
