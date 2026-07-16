@@ -1,0 +1,9 @@
+[Unit]
+Description=mnemo fleet agent — plugin version + functional probe report
+
+# MNEMO_FLEET_PROFILE must be set in ~/.mnemo.env (sourced by the agent script)
+# to match this profile's "id" in fleet.json -- e.g. MNEMO_FLEET_PROFILE=gremos@101.
+# Falls back to "<hostname>-<user>" if unset.
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash %h/.claude/plugins/marketplaces/mnemo-marketplace/mnemo-fleet-agent.sh

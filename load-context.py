@@ -642,6 +642,53 @@ if _pending_wikis:
 if pitfall_lines or context_lines or wiki_hits:
     lines.append('  → recall("your question") — one cited answer synthesized over memory + wiki; prefer it over separate get_memories + search_wiki for a specific question.')
 
+# Fleet status banner — silent when healthy, one line per unhealthy profile.
+# Reuses the SessionStart hook that already fires everywhere instead of a new
+# alert channel (2026-07-16 fleet-agent design: report to Mnemo, surface here).
+try:
+    import urllib.request as _urlreq
+    import time as _time
+
+    _req = _urlreq.Request(
+        _mnemo_base + "/cli/fleet_status",
+        data=b"{}",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    with _urlreq.urlopen(_req, timeout=3) as _resp:
+        _fleet = json.loads(_resp.read())
+    _now = _time.time()
+    _fleet_lines = []
+    for _row in _fleet:
+        # One malformed/stale row must never suppress every other profile's status.
+        try:
+            _reported = _row.get("reported_at", "")
+            _stale = False
+            try:
+                from datetime import datetime as _dt
+                _age = _now - _dt.fromisoformat(_reported.replace("Z", "+00:00")).timestamp()
+                _stale = _age > 900  # 3 missed ~5-min cycles
+            except Exception:
+                pass
+            _probes = _row.get("probes") or {}
+            if isinstance(_probes, str):
+                _probes = json.loads(_probes)
+            _failing = [k for k, v in _probes.items() if isinstance(v, dict) and v.get("status") == "fail"]
+            if _row.get("fetch_error") or _stale or _failing:
+                _reason = (
+                    "fetch error" if _row.get("fetch_error")
+                    else "agent stale" if _stale
+                    else f"{', '.join(_failing)} probe failing"
+                )
+                _fleet_lines.append(f"  ⚠ {_row.get('profile')}: {_reason}")
+        except Exception:
+            continue
+    if _fleet_lines:
+        lines.append("[mnemo] Fleet status:")
+        lines.extend(_fleet_lines)
+except Exception:
+    pass  # fleet status is best-effort, never blocks the session prime
+
 context = "\n".join(lines)
 
 # Prepend setup hint if ~/.mnemo.env is missing (new install or unconfigured machine)

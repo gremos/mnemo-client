@@ -1,0 +1,11 @@
+{
+  "profiles": [
+    { "id": "gremuntu", "host": "local" },
+    { "id": "gremos@101", "host": "gremos-cc01" },
+    { "id": "gremos@102", "host": "engineers-cc01", "user": "gremos" },
+    { "id": "aziogolos@102", "host": "engineers-cc01", "user": "aziogolos" },
+    { "id": "akostantopoulos@102", "host": "engineers-cc01", "user": "akostantopoulos" },
+    { "id": "igkiatis@102", "host": "engineers-cc01", "user": "igkiatis" },
+    { "id": "pchloros@102", "host": "engineers-cc01", "user": "pchloros" }
+  ]
+}
