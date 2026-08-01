@@ -175,16 +175,20 @@ def _install_windows(plugin_root: str) -> None:
 # ---------------------------------------------------------------------------
 
 _MNEMO_ENV   = Path.home() / ".mnemo.env"
-_SETTINGS_JS = Path.home() / ".claude" / "settings.json"
+_CLAUDE_JSON = Path.home() / ".claude.json"
 
 
 def setup_mcp_config() -> None:
-    """Write settings.json.mcpServers.mnemo from ~/.mnemo.env.
+    """Write ~/.claude.json mcpServers.mnemo from ~/.mnemo.env.
 
     Runs unconditionally at every session start so the entry survives
     `claude plugin install` clearing mcpServers. Fails silently.
+
+    Target is ~/.claude.json — the ONLY file `claude mcp list` reads for
+    user-level MCP. settings.json.mcpServers is ignored by Claude Code, so
+    writing there never surfaced `mnemo` in the MCP list (the historical bug).
     """
-    if not _MNEMO_ENV.exists() or not _SETTINGS_JS.exists():
+    if not _MNEMO_ENV.exists() or not _CLAUDE_JSON.exists():
         return
     try:
         env: dict = {}
@@ -196,7 +200,8 @@ def setup_mcp_config() -> None:
 
         host  = env.get("MNEMO_HOST", "localhost")
         port  = env.get("MNEMO_PORT", "")
-        token = env.get("MNEMO_ADMIN_TOKEN", "")
+        # MCP auth is the per-user hook key; admin token is a fallback only.
+        token = env.get("MNEMO_HOOK_KEY", "") or env.get("MNEMO_ADMIN_TOKEN", "")
         if not token:
             return
 
@@ -205,13 +210,17 @@ def setup_mcp_config() -> None:
         else:
             url = f"http://{host}/mcp/"
 
-        settings = json.loads(_SETTINGS_JS.read_text())
-        settings.setdefault("mcpServers", {})["mnemo"] = {
+        cfg = json.loads(_CLAUDE_JSON.read_text())
+        servers = cfg.get("mcpServers")
+        if not isinstance(servers, dict):   # fresh profile ships an empty list
+            servers = {}
+        servers["mnemo"] = {
             "type": "http",
             "url": url,
             "headers": {"Authorization": f"Bearer {token}"},
         }
-        _SETTINGS_JS.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+        cfg["mcpServers"] = servers
+        _CLAUDE_JSON.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
     except Exception:
         pass
 
