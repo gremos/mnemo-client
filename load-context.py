@@ -172,7 +172,7 @@ if cwd and os.path.isdir(cwd):
             capture_output=True, text=True, cwd=cwd, timeout=2,
         ).stdout.strip()
         _log = subprocess.run(
-            ["git", "log", "--oneline", "-5", "--no-merges"],
+            ["git", "log", "--format=%s", "-5", "--no-merges"],   # subjects only: SHAs are query noise
             capture_output=True, text=True, cwd=cwd, timeout=2,
         ).stdout.strip()
         _diff_out = subprocess.run(
@@ -191,7 +191,7 @@ if cwd and os.path.isdir(cwd):
             for p in _recent_paths
         ))[:5]
         _parts = [p for p in [project, _branch, _log] + _path_terms if p]
-        if _parts:
+        if _branch or _log:   # real git context; the no-repo case is handled below
             _query = " ".join(_parts)[:300]
     except Exception:
         pass
@@ -200,7 +200,11 @@ if cwd and os.path.isdir(cwd):
 # ~): seed the query from the project/cwd name so search_wiki and query-aware retrieval
 # still fire instead of being skipped entirely. Engineers launching from $HOME were
 # getting zero wiki retrieval because _query stayed None.
-if not _query and project:
+# Except from $HOME itself: its basename is just the username, which matched nothing and
+# made every such session's wiki brief the same arbitrary page (2026-09-25). No repo and
+# no named directory means no topic yet, so skip the semantic wiki search.
+_in_home = bool(cwd) and os.path.realpath(cwd) == os.path.realpath(os.path.expanduser("~"))
+if not _query and project and not _in_home:
     _query = project
 
 if session_id and _start_sha:
