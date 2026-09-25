@@ -163,6 +163,7 @@ if cwd:
 _query: str | None = None
 _recent_paths: list[str] = []
 _start_sha: str = ""
+_branch = _log = ""
 
 if cwd and os.path.isdir(cwd):
     try:
@@ -204,6 +205,27 @@ if cwd and os.path.isdir(cwd):
 # made every such session's wiki brief the same arbitrary page (2026-09-25). No repo and
 # no named directory means no topic yet, so skip the semantic wiki search.
 _in_home = bool(cwd) and os.path.realpath(cwd) == os.path.realpath(os.path.expanduser("~"))
+
+# Is this a real project? (.mnemo-project here, a project.json up the tree, or a git repo.)
+# Outside one (e.g. $HOME, or a parent folder like XO/) the cwd name matches no knowledge
+# project — only episodes are filed under it — so the brief came back empty. There the
+# brief asks for project="*": the user's memories across every project they can see.
+def _has_project_json(start: str) -> bool:
+    _p = start
+    for _ in range(8):
+        if os.path.isfile(os.path.join(_p, "project.json")):
+            return True
+        _up = os.path.dirname(_p)
+        if _up == _p:
+            return False
+        _p = _up
+    return False
+
+_in_project = bool(cwd) and (
+    bool(_project_file and os.path.isfile(_project_file)) or bool(_branch or _log)
+    or _has_project_json(cwd)
+)
+_brief_project = project if _in_project else "*"
 if not _query and project and not _in_home:
     _query = project
 
@@ -384,8 +406,8 @@ try:
             args["min_importance"] = 4
         else:
             args["min_importance"] = 5
-        if project:
-            args["project"] = project
+        if _brief_project:
+            args["project"] = _brief_project
 
         mem_resp = client.post(
             MCP_URL,
@@ -403,6 +425,24 @@ try:
         if isinstance(content, list) and content:
             raw = content[0].get("text", "[]")
             memories = json.loads(raw) if isinstance(raw, str) else []
+
+        # A repo can still hold no knowledge memories (a workspace repo like XO/ files only
+        # session episodes under its name) -> fall back to the cross-project brief.
+        if not memories and args.get("project") != "*":
+            try:
+                args = {**args, "project": "*"}
+                retry = client.post(
+                    MCP_URL, headers=_mcp_headers,
+                    json={"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                          "params": {"name": "get_memories", "arguments": args}},
+                )
+                retry.raise_for_status()
+                rc = _parse_sse(retry.text).get("result", {}).get("content", [])
+                if isinstance(rc, list) and rc:
+                    raw = rc[0].get("text", "[]")
+                    memories = json.loads(raw) if isinstance(raw, str) else []
+            except Exception:
+                pass
 
         # Semantic wiki retrieval — runs 2nd (right after memories) so it fits inside the
         # 5s hook budget even on slow network paths; it was the last of 6 calls before and
