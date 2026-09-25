@@ -35,6 +35,6 @@ Logs: `~/.local/share/compile-wiki-auto/`
 - **SessionStart hook** — loads top memories + active lesson directives as context
 - **PreToolUse hook** — evaluates Bash commands against active lessons
 - **UserPromptSubmit hook** — detects user corrections for the RL loop
-- **Stop hook** — wraps the session: extracts corrections/decisions via LLM, calls `wrap_session`, auto-drafts wiki entries for notable sessions
+- **SessionEnd hook** — wraps the session once at exit (skipped when worklog is installed; worklog sends the wrap): extracts corrections/decisions via LLM, calls `wrap_session`, auto-drafts wiki entries for notable sessions
 - **`/mnemo:memload`** — manual context reload after `/compact`
 - **`/mnemo:memsave`** — manual session close

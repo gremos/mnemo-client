@@ -5,7 +5,7 @@ description: Scaffold a new wiki for a project or workspace, with routing config
 
 # /mnemo:wiki-init — Initialise a Wiki
 
-Create a new wiki for a project or workspace.  After this, the Mnemo Stop hook
+Create a new wiki for a project or workspace.  After this, the Mnemo SessionEnd hook
 and `/mnemo:wiki-save` will automatically route sessions from that cwd to this wiki.
 
 ## When to use

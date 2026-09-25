@@ -2,7 +2,7 @@
 """
 mnemo Background Mend Script
 
-Called by the Stop hook after Claude exits. Reads the session conversation JSONL,
+Called by the SessionEnd hook when Claude exits. Reads the session conversation JSONL,
 sends the text to Azure OpenAI for structured extraction (corrections, approvals,
 outcome, summary, wiki_summary), then calls wrap_session via the Mnemo MCP API.
 
@@ -373,11 +373,14 @@ def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
                   memory_helped: bool | None = None) -> dict | None:
     """Call /cli/register_claude_session + /cli/wrap_session REST endpoints."""
     timeout = 30 if session_text else 8
+    # Pin the wrap to THIS session. Without the header the server closes the user's
+    # most recently registered session, which is a different one whenever sessions overlap.
+    headers = {**_cli_headers(), "X-Session-Id": session_id}
     try:
         # Register session so wrap_session attributes the episode correctly
         _http_post(
             CLI_BASE + "/cli/register_claude_session",
-            _cli_headers(),
+            headers,
             {"claude_session_id": session_id},
             timeout,
         )
@@ -396,7 +399,7 @@ def _wrap_session(session_id: str, project: str, summary: str, outcome: str,
             body["memory_helped"] = memory_helped
 
         status, _headers, result_obj = _http_post(
-            CLI_BASE + "/cli/wrap_session", _cli_headers(), body, timeout,
+            CLI_BASE + "/cli/wrap_session", headers, body, timeout,
         )
         if status >= 400:
             log.error("wrap_session failed: HTTP %d %s", status, str(result_obj)[:200])

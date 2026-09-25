@@ -1,6 +1,6 @@
 {
   "name": "mnemo",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
@@ -58,7 +58,7 @@
         ]
       }
     ],
-    "Stop": [
+    "SessionEnd": [
       {
         "hooks": [
           {
@@ -67,7 +67,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/wrap-session.sh"
             ],
-            "async": true
+            "timeout": 10
           }
         ]
       }
