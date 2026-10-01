@@ -56,3 +56,27 @@ def test_without_base_url_falls_back_like_before(tmp_path, monkeypatch, script):
     for k in ENV_KEYS:
         monkeypatch.delenv(k, raising=False)
     assert _resolve(script, tmp_path, monkeypatch) == "http://localhost:80"
+
+
+def _setup_mod(home: pathlib.Path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cws", ROOT / "compile-wiki-setup.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod._MNEMO_ENV, mod._CLAUDE_JSON = home / ".mnemo.env", home / ".claude.json"
+    return mod
+
+
+def test_mcp_self_heal_uses_mnemo_base_url(home):
+    """Session-start self-heal used to rewrite mcpServers.mnemo to http://localhost/mcp/ on the VMs."""
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {}}))
+    _setup_mod(home).setup_mcp_config()
+    srv = json.loads((home / ".claude.json").read_text())["mcpServers"]["mnemo"]
+    assert srv["url"] == "https://mnemo.example.test/mcp/"
+
+
+def test_mcp_self_heal_legacy_host_port_still_works(tmp_path):
+    (tmp_path / ".mnemo.env").write_text("MNEMO_HOST=h.test\nMNEMO_PORT=3456\nMNEMO_HOOK_KEY=k\n")
+    (tmp_path / ".claude.json").write_text("{}")
+    _setup_mod(tmp_path).setup_mcp_config()
+    assert json.loads((tmp_path / ".claude.json").read_text())["mcpServers"]["mnemo"]["url"] == "http://h.test:3456/mcp/"

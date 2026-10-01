@@ -206,7 +206,10 @@ def setup_mcp_config() -> None:
         if not token:
             return
 
-        if port and port not in ("80", "443", ""):
+        base = env.get("MNEMO_BASE_URL", "").rstrip("/")   # single client source since 2026-09-26
+        if base:
+            url = f"{base}/mcp/"
+        elif port and port not in ("80", "443", ""):
             url = f"http://{host}:{port}/mcp/"
         else:
             url = f"http://{host}/mcp/"
