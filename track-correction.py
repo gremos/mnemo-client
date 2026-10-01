@@ -110,6 +110,9 @@ if not api_key:
 
 _mnemo_base = (
     os.environ.get("CLAUDE_PLUGIN_OPTION_SERVER_URL")
+    # Single source since 2026-09-26: MNEMO_BASE_URL in ~/.mnemo.env (laptop and VMs). Without it
+    # the hooks fell back to localhost:80 and silently dropped corrections fleet-wide.
+    or (os.getenv("MNEMO_BASE_URL") or _env.get('MNEMO_BASE_URL', '')).rstrip("/")
     or os.getenv("MCP_URL", "").replace("/mcp/", "").rstrip("/")
     or f"http://{os.getenv('MNEMO_HOST') or _env.get('MNEMO_HOST', 'localhost')}:{os.getenv('MNEMO_PORT') or _env.get('MNEMO_PORT', '80')}"
 ).rstrip("/")
