@@ -43,3 +43,12 @@ def test_brief_without_httpx(tmp_path):
     assert r.stdout.startswith("{"), r.stdout[:400]
     ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "Session brief" in ctx and "probe-ok" in ctx
+
+
+def test_brief_hook_fires_on_resume():
+    """A resumed session (claude --resume) never got a brief: the matcher was 'startup' only."""
+    import re
+    hooks = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["hooks"]["SessionStart"]
+    m = next(e["matcher"] for e in hooks if any("load-context.py" in str(h.get("args", "")) + h["command"] for h in e["hooks"]))
+    assert re.fullmatch(m, "startup") and re.fullmatch(m, "resume")
+    assert not re.fullmatch(m, "compact") and not re.fullmatch(m, "clear")
