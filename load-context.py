@@ -250,7 +250,9 @@ if not _COMPILE_WIKI_SENTINEL.exists():
             _spec = _ilu.spec_from_file_location("compile_wiki_setup", _setup_script)
             _mod = _ilu.module_from_spec(_spec)
             _spec.loader.exec_module(_mod)
-            _mod.main()
+            import contextlib as _ctx
+            with _ctx.redirect_stdout(sys.stderr):   # stdout is the hook's JSON channel
+                _mod.main()
     except Exception:
         pass
 
@@ -355,15 +357,44 @@ def _parse_sse(body: str) -> dict:
             return json.loads(line[6:])
     return {}
 
+class _Resp:
+    def __init__(self, status: int, headers, text: str):
+        self.status_code, self.headers, self.text = status, headers, text
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _Client:
+    """Stdlib stand-in for the httpx.Client calls below. The hook runs under bare
+    /usr/bin/python3, which may lack httpx: on 102's gremos profile the ImportError was
+    swallowed and no session got a brief (2026-10). The other hooks already use urllib."""
+
+    def __init__(self, timeout: float):
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def post(self, url: str, headers: dict, json: dict) -> _Resp:
+        import json as _json
+        import urllib.request
+        req = urllib.request.Request(url, data=_json.dumps(json).encode(), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:   # raises HTTPError on 4xx/5xx
+            return _Resp(r.status, r.headers, r.read().decode("utf-8", "replace"))
+
+
 memories: list = []
 pending_memories: list = []
 active_lessons: list = []
 wiki_hits: list = []
 
 try:
-    import httpx
-
-    with httpx.Client(timeout=4) as client:
+    with _Client(timeout=4) as client:
         init_resp = client.post(
             MCP_URL,
             headers={
