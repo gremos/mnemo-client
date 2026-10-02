@@ -31,8 +31,9 @@ session_id = payload.get("session_id", "")
 cwd = payload.get("cwd", "")
 source = payload.get("source", "startup")
 
-# Don't re-prime on compact/clear — only on genuine session start or resume
-if source in ("compact", "clear"):
+# Re-prime on start, resume and /clear (clear empties the context: igkiatis' 2026-10-02 session
+# started from /clear and had no brief). Not on compact: its summary keeps the context.
+if source == "compact":
     sys.exit(0)
 
 # ---------------------------------------------------------------------------
@@ -113,11 +114,13 @@ if not _pc_id:
 # Derive project name from cwd + git context for query-aware priming
 # ---------------------------------------------------------------------------
 
-_project_file = os.path.join(cwd, ".mnemo-project") if cwd else None
+# A session worktree (<repo>/.claude/worktrees/<name>) belongs to its repo, not to <name>.
+_proj_dir = cwd.split("/.claude/worktrees/")[0] if cwd else cwd
+_project_file = os.path.join(_proj_dir, ".mnemo-project") if _proj_dir else None
 if _project_file and os.path.isfile(_project_file):
-    project = open(_project_file).read().strip() or os.path.basename(cwd.rstrip("/"))
+    project = open(_project_file).read().strip() or os.path.basename(_proj_dir.rstrip("/"))
 else:
-    project = os.path.basename(cwd.rstrip("/")) if cwd else None
+    project = os.path.basename(_proj_dir.rstrip("/")) if _proj_dir else None
 
 def _mnemo_platform() -> str:
     if sys.platform == "win32":

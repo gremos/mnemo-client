@@ -50,5 +50,20 @@ def test_brief_hook_fires_on_resume():
     import re
     hooks = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["hooks"]["SessionStart"]
     m = next(e["matcher"] for e in hooks if any("load-context.py" in str(h.get("args", "")) + h["command"] for h in e["hooks"]))
-    assert re.fullmatch(m, "startup") and re.fullmatch(m, "resume")
-    assert not re.fullmatch(m, "compact") and not re.fullmatch(m, "clear")
+    assert re.fullmatch(m, "startup") and re.fullmatch(m, "resume") and re.fullmatch(m, "clear")
+    assert not re.fullmatch(m, "compact")
+
+
+def test_brief_in_session_worktree_names_the_repo(tmp_path):
+    """akostantopoulos 2026-10-02: a session in <repo>/.claude/worktrees/s-... got 's-...' as its project."""
+    srv = HTTPServer(("127.0.0.1", 0), _MCP)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    wt = tmp_path / "infra-azure-gyp" / ".claude" / "worktrees" / "s-20261002-054510"
+    wt.mkdir(parents=True)
+    (tmp_path / ".mnemo.env").write_text(f"MNEMO_BASE_URL=http://127.0.0.1:{srv.server_port}\nMNEMO_HOOK_KEY=k\n")
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    r = subprocess.run([sys.executable, str(ROOT / "load-context.py")], env=env, capture_output=True, text=True,
+                       input=json.dumps({"session_id": "t", "cwd": str(wt), "source": "startup"}), timeout=30)
+    srv.shutdown()
+    ctx = json.loads(r.stdout[r.stdout.index("{"):])["hookSpecificOutput"]["additionalContext"]
+    assert 'brief for "infra-azure-gyp"' in ctx, ctx[:120]
