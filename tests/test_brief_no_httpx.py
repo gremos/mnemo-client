@@ -51,7 +51,7 @@ def test_brief_hook_fires_on_resume():
     hooks = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["hooks"]["SessionStart"]
     m = next(e["matcher"] for e in hooks if any("load-context.py" in str(h.get("args", "")) + h["command"] for h in e["hooks"]))
     assert re.fullmatch(m, "startup") and re.fullmatch(m, "resume") and re.fullmatch(m, "clear")
-    assert not re.fullmatch(m, "compact")
+    assert re.fullmatch(m, "compact")          # compact re-sends only the wiki map (map arms)
 
 
 def test_brief_in_session_worktree_names_the_repo(tmp_path):

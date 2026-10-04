@@ -1,6 +1,6 @@
 {
   "name": "mnemo",
-  "version": "2.3.10",
+  "version": "2.4.0",
   "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
@@ -16,7 +16,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
@@ -52,6 +52,18 @@
             "command": "/usr/bin/python3",
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/track-correction.py"
+            ],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/wiki-topic.py"
             ],
             "timeout": 5
           }
