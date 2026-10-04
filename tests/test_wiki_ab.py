@@ -22,8 +22,8 @@ ITEMS.append(dict(ITEMS[2], id="99999999-dup"))          # second version of the
 def test_arm_stable_spread_and_override(monkeypatch):
     monkeypatch.delenv("MNEMO_WIKI_ARM", raising=False)
     arms = [wiki_ab.arm(f"s-{i}") for i in range(300)]
-    assert set(arms) == set(wiki_ab.ARMS) and wiki_ab.arm("s-7") == wiki_ab.arm("s-7")
-    assert min(arms.count(a) for a in wiki_ab.ARMS) > 70
+    assert set(arms) == {"control", "map_topic"} and wiki_ab.arm("s-7") == wiki_ab.arm("s-7")
+    assert 35 < arms.count("control") < 90
     monkeypatch.setenv("MNEMO_WIKI_ARM", "map")
     assert wiki_ab.arm("anything") == "map"
 
@@ -40,6 +40,12 @@ def test_pages_dedup_and_topic_matching():
     assert m("the jira ado sync failed") == [TITLES[4]]
     assert m("please fix the failing test in the overview page") == []
     assert m("refactor the security of the api") == []
+    plesk = wiki_ab.pages_from([{"id": "p1", "tags": [], "preview": "# Plesk / Postfix Operations (KIWI01 / gyp.gr)"},
+                                {"id": "p2", "tags": [], "preview": "# agora-poc — AI Lead Generation Platform"}])
+    mp = lambda q: [p["title"] for p in wiki_ab.topic_matches(q, plesk)]
+    assert mp("install the mnemo db on kiwi01") == []                   # parenthetical code = qualifier
+    assert mp("plesk on kiwi01 rejects mail") == ["Plesk / Postfix Operations (KIWI01 / gyp.gr)"]   # ... still counts as a title token
+    assert mp("why cant tests merge on agora-poc?") == ["agora-poc — AI Lead Generation Platform"]  # leading code
     block = wiki_ab.map_block(pages)
     assert all(t in block for t in TITLES) and "get_memory" in block
 
