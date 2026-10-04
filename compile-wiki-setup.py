@@ -234,7 +234,9 @@ def setup_mcp_config() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    if SENTINEL.exists():
+    # Single wiki writer (Mnemo fleet-correctness ticket 11, 2026-10-04): only the laptop compiles the team wiki
+    # (cron, Sonnet) and mirrors it to mnemo.xo.gr. Other profiles install no compile timer unless opted in.
+    if SENTINEL.exists() or os.environ.get("MNEMO_WIKI_WRITER") != "1":
         return
 
     plat = detect_platform()

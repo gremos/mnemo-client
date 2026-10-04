@@ -80,3 +80,17 @@ def test_mcp_self_heal_legacy_host_port_still_works(tmp_path):
     (tmp_path / ".claude.json").write_text("{}")
     _setup_mod(tmp_path).setup_mcp_config()
     assert json.loads((tmp_path / ".claude.json").read_text())["mcpServers"]["mnemo"]["url"] == "http://h.test:3456/mcp/"
+
+
+def test_compile_timer_only_for_the_wiki_writer(tmp_path, monkeypatch):
+    """Single wiki writer: profiles install no compile timer unless MNEMO_WIKI_WRITER=1."""
+    mod = _setup_mod(tmp_path)
+    mod.SENTINEL = tmp_path / ".installed"
+    calls = []
+    monkeypatch.setattr(mod, "detect_platform", lambda: calls.append("install") or "unsupported")
+    monkeypatch.delenv("MNEMO_WIKI_WRITER", raising=False)
+    mod.main()
+    assert calls == []
+    monkeypatch.setenv("MNEMO_WIKI_WRITER", "1")
+    mod.main()
+    assert calls == ["install"]
