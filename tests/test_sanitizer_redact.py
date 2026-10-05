@@ -16,10 +16,10 @@ def test_redact_masks_every_secret_kind_and_keeps_the_note():
     assert S.scan(text)                                         # dirty before
     out = S.redact(text)
     assert S.is_clean_redacted(out)                             # clean after
-    for s in ("sk_test_9f8e", "72f988bf", "52.174.10.20", "abcdefghijklmnop", "eyJhbGci", "a3f9c2e8b1d4"):
+    for s in ("sk_test_9f8e", "72f988bf", "abcdefghijklmnop", "eyJhbGci", "a3f9c2e8b1d4"):
         assert s not in out
     assert "MNEMO_HOOK_KEY=***" in out and "# Storage account" in out
-    assert "10.1.119.101" in out                                # private IPs are not secrets (not flagged by scan)
+    assert "10.1.119.101" in out and "52.174.10.20" in out      # IPs are kept, public and private (user decision)
 
 
 def test_redact_leaves_clean_text_unchanged():
