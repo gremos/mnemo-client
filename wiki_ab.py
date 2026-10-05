@@ -1,13 +1,10 @@
-"""wiki_ab.py — wiki map + topic pointers, A/B by session (Mnemo ADR-0010, knowledge-delivery ticket 10).
+"""wiki_ab.py — team wiki map + topic pointers (Mnemo ADR-0011, knowledge-delivery ticket 10).
 
-Measured 2026-10-04: in sessions whose prompts raised a subject with its own wiki page, Claude looked at the
-wiki in 25% (engineers 1/20) and the session-start hook delivered the matching page 0/32 times (its query
-is the folder name; the brief showed 500 chars of index.md = 4/33 entries). Arms (stable per session; 2.4.1: 20% control, 80% map_topic):
-  control    today's brief (500-char index excerpt)
-  map        full wiki map (every page: title + id) in the brief, re-sent after compaction
-  map_topic  map + a one-line pointer when a prompt names a page's subject (wiki-topic.py)
-The map comes from Mnemo's wiki:xo pages (identical on both instances), not local files: the VMs' local
-wiki copies are stale and have no index.md. Pages open with get_memory(<id>) on every profile.
+Karpathy pattern: the wiki is plain markdown in git (laptop = single writer). Every profile holds a read-only copy
+(wiki-distribute.sh): the session gets the wiki's own index.md as its map (wiki-map.py) and, when a prompt names a
+page's subject, a pointer to the page file (wiki-topic.py); Claude opens pages with Read. No Mnemo server involved.
+Replay 2026-10-05 (8 on-subject prompts): local file map opened the expected page 7/8 vs Mnemo get_memory map 6/8,
+same cost. Arms (stable per session): 20% control (no map), 80% map_topic; `map` is an override only.
 """
 from __future__ import annotations
 
@@ -20,6 +17,9 @@ from pathlib import Path
 ARMS = ("control", "map", "map_topic")
 CONTROL_SHARE = 20      # % of sessions kept on the control brief; the rest get map_topic (map: override only)
 CACHE = Path(os.environ.get("CLAUDE_PLUGIN_DATA", os.path.expanduser("~/.mnemo"))) / "wiki-map.json"
+# Local read-only copy of the team wiki (index.md + SCHEMA.md + wiki/, stamped with the source commit), shipped from
+# the laptop's git checkout to every profile (Karpathy pattern: plain files, index first, pages opened in full).
+LOCAL_ROOT = Path(os.environ.get("MNEMO_WIKI_DIR", os.path.expanduser("~/.local/share/xo-wiki")))
 _GENERIC = {"overview", "management", "standard", "standards", "operations", "common", "status", "structure",
             "platform", "conventions", "policy", "data", "guide", "phase", "team", "layer", "score", "user",
             "users", "azure", "microsoft", "shared", "infrastructure", "automation", "story", "lifecycle",
@@ -37,36 +37,39 @@ def arm(session_id: str) -> str:
     return "control" if int(hashlib.sha1((session_id or "").encode()).hexdigest(), 16) % 100 < CONTROL_SHARE else "map_topic"
 
 
+def local_pages(root: Path = LOCAL_ROOT) -> list[dict]:
+    """Pages of the local copy: id = path under wiki/ without .md, title = the page's H1."""
+    out = []
+    for f in sorted((root / "wiki").rglob("*.md")):
+        rel = f.relative_to(root / "wiki").with_suffix("").as_posix()
+        try:
+            t = title_of(f.read_text(errors="replace")[:4000]) or rel
+        except OSError:
+            continue
+        out.append({"id": rel, "title": t, "domain": rel.split("/")[0], "path": str(f)})
+    return out
+
+
 def title_of(preview: str) -> str | None:
     m = re.search(r"(?m)^#\s+([^\n]+)", preview or "") or re.search(r"#\s+([^\n#]+?)(?:\s{2,}|$)", preview or "")
     return m.group(1).strip() if m else None
 
 
-def domain_of(tags: list[str]) -> str:
-    return next((t.split(":", 1)[1] for t in tags or [] if t.startswith("domain:")), "other")
-
-
-def pages_from(items: list[dict]) -> list[dict]:
-    """get_memories(project='wiki:xo', tags=['wiki-page']) rows -> [{id, title, domain}], one per title."""
-    seen, out = set(), []
-    for m in items:
-        t = title_of(m.get("preview") or m.get("content") or "")
-        if t and t not in seen:
-            seen.add(t)
-            out.append({"id": m["id"], "title": t, "domain": domain_of(m.get("tags"))})
-    return sorted(out, key=lambda p: (p["domain"], p["title"]))
-
-
 def map_block(pages: list[dict]) -> str:
-    lines = ["  Wiki map (team wiki:xo — on a subject listed here, open the page with get_memory(\"<id>\") "
-             "before deciding and cite it):"]
-    dom = None
-    for p in pages:
-        if p["domain"] != dom:
-            dom = p["domain"]
-            lines.append(f"    [{dom}]")
-        lines.append(f"      {p['title']} — {p['id'][:8]}")
-    return "\n".join(lines)
+    """The session's wiki map: the local copy's index.md (pages are listed for the topic matcher only)."""
+    return local_map_block(LOCAL_ROOT)
+
+
+def local_map_block(root: Path = LOCAL_ROOT) -> str:
+    """The wiki's own index.md (every page, one line each) with the absolute page location."""
+    try:
+        idx = (root / "index.md").read_text(errors="replace")
+        sha = (root / ".wiki-commit").read_text().strip()[:8] if (root / ".wiki-commit").is_file() else "?"
+    except OSError:
+        return ""
+    body = "\n".join("    " + l for l in idx.splitlines() if l.strip() and not l.startswith(("# ", "_")))
+    return (f"  Wiki map (team wiki, local copy at {root} @ {sha}; page [[x]] is {root}/wiki/x.md — on a subject "
+            f"listed here, Read the page before deciding and cite it):\n" + body)
 
 
 def save_cache(pages: list[dict]) -> None:
@@ -109,6 +112,6 @@ def topic_matches(prompt: str, pages: list[dict], limit: int = 2) -> list[dict]:
 
 
 def pointer_text(pages: list[dict]) -> str:
-    items = "; ".join(f"{p['title']} — get_memory(\"{p['id']}\")" for p in pages)
+    items = "; ".join(f"{p['title']} — Read {p['path']}" for p in pages)
     return (f"[wiki] Relevant team wiki page(s) for this request: {items}. "
             f"Open it before deciding on this subject and cite it; if it is stale or wrong, say so.")

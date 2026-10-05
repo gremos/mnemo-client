@@ -38,11 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wiki_ab  # noqa: E402
 
 _wiki_arm = wiki_ab.arm(session_id)
-if source == "compact":
-    _pages = wiki_ab.load_cache() if _wiki_arm != "control" else []
-    if _pages:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                                 "additionalContext": "[mnemo] " + wiki_ab.map_block(_pages).strip()}}))
+if source == "compact":                         # the wiki map is re-sent by wiki-map.py
     sys.exit(0)
 
 # ---------------------------------------------------------------------------
@@ -401,7 +397,6 @@ class _Client:
 
 
 memories: list = []
-_wiki_pages: list = []
 pending_memories: list = []
 active_lessons: list = []
 wiki_hits: list = []
@@ -555,19 +550,6 @@ try:
             raw = lessons_content[0].get("text", "[]")
             active_lessons = json.loads(raw) if isinstance(raw, str) else []
 
-        if _wiki_arm != "control":
-            try:
-                wresp = client.post(MCP_URL, headers=_mcp_headers, json={
-                    "jsonrpc": "2.0", "id": 7, "method": "tools/call",
-                    "params": {"name": "get_memories", "arguments": {
-                        "project": "wiki:xo", "tags": ["wiki-page"], "limit": 50, "min_importance": 1}}})
-                wc = _parse_sse(wresp.text).get("result", {}).get("content", [])
-                if isinstance(wc, list) and wc:
-                    _wiki_pages = wiki_ab.pages_from(json.loads(wc[0].get("text", "[]")))
-                    if _wiki_pages:
-                        wiki_ab.save_cache(_wiki_pages)
-            except Exception:
-                pass
 
 except Exception:
     sys.exit(0)
@@ -703,9 +685,7 @@ if wiki_ptrs:
         lines.extend(wiki_lines)
 
 _wiki_roots_active = _get_wiki_roots(cwd) if cwd else []
-if _wiki_arm != "control" and _wiki_pages:
-    lines.append(wiki_ab.map_block(_wiki_pages))
-_index_budget = 500 if _wiki_arm == "control" or not _wiki_pages else 0
+_index_budget = 500 if _wiki_arm == "control" else 0    # map arms get the full index.md from wiki-map.py
 _index_used = 0
 for _wr in _wiki_roots_active[:2]:
     _idx_path = os.path.join(_wr, "index.md")

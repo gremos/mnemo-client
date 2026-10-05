@@ -1,7 +1,7 @@
 {
   "name": "mnemo",
-  "version": "2.4.2",
-  "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
+  "version": "2.5.0",
+  "description": "Long-term memory layer for Claude Code sessions \u2014 persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
     "email": "gremos@users.noreply.github.com"
@@ -26,6 +26,15 @@
             ],
             "timeout": 5,
             "statusMessage": "Loading Mnemo context..."
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/wiki-map.py"
+            ],
+            "timeout": 5,
+            "statusMessage": "Loading wiki map..."
           }
         ]
       }

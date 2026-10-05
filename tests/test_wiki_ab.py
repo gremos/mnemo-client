@@ -1,11 +1,9 @@
-"""Wiki map + topic pointer A/B (knowledge-delivery ticket 10)."""
+"""Wiki map (local index.md) + topic pointer (knowledge-delivery ticket 10, ADR-0011)."""
 import json
 import os
 import pathlib
 import subprocess
 import sys
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -14,9 +12,18 @@ import wiki_ab  # noqa: E402
 TITLES = ["Endpoint Management — Intune / Microsoft Defender", "Telephony — 3CX PBX", "Coherence Layer",
           "CRM Reconciliation", "Jira → ADO Bridge (gyp-weu-02-jira-ado-func)", "Agora Pipeline Overview",
           "Agora Enrichers", "Infrastructure Overview", "Security Overview"]
-ITEMS = [{"id": f"{i:08d}-0000-0000-0000-000000000000", "tags": ["wiki-page", "domain:infra"],
-          "preview": f"--- tags: [x] updated: 2026-06-01 ---  # {t}  body"} for i, t in enumerate(TITLES)]
-ITEMS.append(dict(ITEMS[2], id="99999999-dup"))          # second version of the same page
+
+
+def _pages(titles):
+    return [{"id": f"x/p{i}", "title": t, "domain": "x", "path": f"/w/wiki/x/p{i}.md"} for i, t in enumerate(titles)]
+
+
+def _run(script, home, payload, arm, extra_env=None):
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "MNEMO_WIKI_ARM": arm, "CLAUDE_PLUGIN_DATA": str(home / "pd"),
+           **(extra_env or {})}
+    r = subprocess.run([sys.executable, str(ROOT / script)], input=json.dumps(payload), env=env,
+                       capture_output=True, text=True, timeout=30)
+    return json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if r.stdout.strip() else ""
 
 
 def test_arm_stable_spread_and_override(monkeypatch):
@@ -28,9 +35,8 @@ def test_arm_stable_spread_and_override(monkeypatch):
     assert wiki_ab.arm("anything") == "map"
 
 
-def test_pages_dedup_and_topic_matching():
-    pages = wiki_ab.pages_from(ITEMS)
-    assert len(pages) == len(TITLES)
+def test_topic_matching():
+    pages = _pages(TITLES)
     m = lambda q: [p["title"] for p in wiki_ab.topic_matches(q, pages)]
     assert m("intune defender policy blocks the laptops") == [TITLES[0]]
     assert m("why is intune not enrolling the laptops?") == []          # one plain word: left to the map
@@ -40,54 +46,53 @@ def test_pages_dedup_and_topic_matching():
     assert m("the jira ado sync failed") == [TITLES[4]]
     assert m("please fix the failing test in the overview page") == []
     assert m("refactor the security of the api") == []
-    plesk = wiki_ab.pages_from([{"id": "p1", "tags": [], "preview": "# Plesk / Postfix Operations (KIWI01 / gyp.gr)"},
-                                {"id": "p2", "tags": [], "preview": "# agora-poc — AI Lead Generation Platform"}])
+    plesk = _pages(["Plesk / Postfix Operations (KIWI01 / gyp.gr)", "agora-poc — AI Lead Generation Platform"])
     mp = lambda q: [p["title"] for p in wiki_ab.topic_matches(q, plesk)]
     assert mp("install the mnemo db on kiwi01") == []                   # parenthetical code = qualifier
     assert mp("plesk on kiwi01 rejects mail") == ["Plesk / Postfix Operations (KIWI01 / gyp.gr)"]   # ... still counts as a title token
     assert mp("why cant tests merge on agora-poc?") == ["agora-poc — AI Lead Generation Platform"]  # leading code
-    block = wiki_ab.map_block(pages)
-    assert all(t in block for t in TITLES) and "get_memory" in block
-
-
-class _MCP(BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        args = body.get("params", {}).get("arguments", {})
-        rows = ITEMS if args.get("project") == "wiki:xo" else []
-        out = f"data: {json.dumps({'jsonrpc': '2.0', 'id': body.get('id'), 'result': {'content': [{'type': 'text', 'text': json.dumps(rows)}]}})}\n\n"
-        self.send_response(200); self.send_header("Content-Type", "text/event-stream")
-        self.send_header("mcp-session-id", "s1"); self.end_headers(); self.wfile.write(out.encode())
-
-    def log_message(self, *a):
-        pass
-
-
-def _run(script, home, payload, arm):
-    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "MNEMO_WIKI_ARM": arm, "CLAUDE_PLUGIN_DATA": str(home / "pd")}
-    r = subprocess.run([sys.executable, str(ROOT / script)], input=json.dumps(payload), env=env,
-                       capture_output=True, text=True, timeout=30)
-    return json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if r.stdout.strip() else ""
-
-
-def test_brief_map_arm_vs_control_and_compact(tmp_path):
-    srv = HTTPServer(("127.0.0.1", 0), _MCP); threading.Thread(target=srv.serve_forever, daemon=True).start()
-    (tmp_path / ".mnemo.env").write_text(f"MNEMO_BASE_URL=http://127.0.0.1:{srv.server_port}\nMNEMO_HOOK_KEY=k\n")
-    start = {"session_id": "t", "cwd": str(tmp_path), "source": "startup"}
-    ctl = _run("load-context.py", tmp_path, start, "control")
-    mp = _run("load-context.py", tmp_path, start, "map")
-    assert "Wiki map" not in ctl and "Wiki map" in mp and "Telephony — 3CX PBX" in mp
-    comp = {"session_id": "t", "cwd": str(tmp_path), "source": "compact"}
-    assert "Wiki map" in _run("load-context.py", tmp_path, comp, "map")
-    assert _run("load-context.py", tmp_path, comp, "control") == ""
-    srv.shutdown()
 
 
 def test_topic_hook_points_once_per_page(tmp_path):
     (tmp_path / "pd").mkdir()
-    (tmp_path / "pd" / "wiki-map.json").write_text(json.dumps(wiki_ab.pages_from(ITEMS)))
+    (tmp_path / "pd" / "wiki-map.json").write_text(json.dumps(_pages(TITLES)))
     p = {"session_id": "s", "prompt": "restart the 3cx trunk"}
     first = _run("wiki-topic.py", tmp_path, p, "map_topic")
-    assert "Telephony — 3CX PBX" in first and "get_memory" in first
+    assert "Telephony — 3CX PBX" in first and "Read /w/wiki/x/p1.md" in first
     assert _run("wiki-topic.py", tmp_path, p, "map_topic") == ""          # once per session
-    assert _run("wiki-topic.py", tmp_path, {**p, "session_id": "s2"}, "map") == ""   # other arms: nothing
+    assert _run("wiki-topic.py", tmp_path, {**p, "session_id": "s2"}, "control") == ""   # other arms: nothing
+
+
+def _local_wiki(root):
+    (root / "wiki" / "platforms").mkdir(parents=True)
+    (root / "wiki" / "platforms" / "gpml01.md").write_text("---\ntags: [x]\n---\n# GPML01 — gyp.gr Mail Server\nbody\n")
+    (root / "index.md").write_text("# XO Company Wiki\n_compiled_\n\n## platforms/\n- [[platforms/gpml01]] — mail server\n")
+    (root / ".wiki-commit").write_text("abcdef1234\n")
+
+
+def test_local_source_map_and_pointer(tmp_path, monkeypatch):
+    _local_wiki(tmp_path)
+    monkeypatch.setattr(wiki_ab, "LOCAL_ROOT", tmp_path)
+    pages = wiki_ab.local_pages(tmp_path)
+    assert pages == [{"id": "platforms/gpml01", "title": "GPML01 — gyp.gr Mail Server", "domain": "platforms",
+                      "path": str(tmp_path / "wiki" / "platforms" / "gpml01.md")}]
+    block = wiki_ab.map_block(pages)
+    assert "local copy at" in block and "@ abcdef12" in block and "[[platforms/gpml01]] — mail server" in block
+    assert "XO Company Wiki" not in block                                  # index title/subtitle dropped
+    hits = wiki_ab.topic_matches("check health of gpml01", pages)
+    assert "Read " + str(tmp_path / "wiki" / "platforms" / "gpml01.md") in wiki_ab.pointer_text(hits)
+
+
+def test_brief_uses_local_copy_without_server(tmp_path):
+    _local_wiki(tmp_path / "xo-wiki")
+    env = {"MNEMO_WIKI_DIR": str(tmp_path / "xo-wiki")}
+    start = {"session_id": "t", "cwd": str(tmp_path), "source": "startup"}
+    out = _run("wiki-map.py", tmp_path, start, "map_topic", extra_env=env)   # no server, no key
+    assert out.startswith("[wiki]") and "local copy at" in out and "[[platforms/gpml01]]" in out
+    assert _run("wiki-map.py", tmp_path, {**start, "source": "compact"}, "map_topic", extra_env=env) == out
+    assert _run("wiki-map.py", tmp_path, start, "control", extra_env=env) == ""
+    assert _run("load-context.py", tmp_path, start, "map_topic", extra_env=env) == ""   # no duplicate map
+    assert _run("wiki-map.py", tmp_path, start, "map_topic", extra_env={"MNEMO_WIKI_DIR": str(tmp_path / "none")}) == ""
+    topic = {"session_id": "t", "prompt": "is gpml01 healthy?"}
+    assert "Read " + str(tmp_path / "xo-wiki" / "wiki" / "platforms" / "gpml01.md") in \
+        _run("wiki-topic.py", tmp_path, topic, "map_topic", extra_env=env)
