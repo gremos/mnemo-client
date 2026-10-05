@@ -156,3 +156,29 @@ def scan(text: str) -> list[Hit]:
 def is_clean(text: str) -> bool:
     """Return True if text passes all sanitization checks."""
     return len(scan(text)) == 0
+
+
+MASK = "***"
+_RE_ENV_ASSIGN = re.compile(r"\b([A-Z][A-Z0-9_]{4,})(\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|\S+)")
+
+
+def redact(text: str) -> str:
+    """Mask every secret `scan` would report, in full, with ***: live secrets, JWTs, bearer values, high-entropy hex
+    and tokens, Azure GUIDs, public IPv4s; for known secret variable names only the value (NAME=***), so the note
+    keeps its meaning. Wiki writers redact, then require `is_clean_redacted` before writing (fail-closed)."""
+    for secret in sorted(_LIVE_SECRETS, key=len, reverse=True):
+        text = text.replace(secret, MASK)
+    text = _RE_ENV_ASSIGN.sub(lambda m: m.group(1) + m.group(2) + MASK if m.group(1) in _DENYLIST_NAMES else m.group(0), text)
+    text = _RE_JWT.sub(MASK, text)
+    text = _RE_BEARER.sub(lambda m: m.group(0).split()[0] + " " + MASK, text)
+    text = _RE_AZURE_GUID.sub(MASK, text)
+    text = _RE_HEX_SECRET.sub(lambda m: MASK if _shannon_entropy(m.group()) >= 3.5 else m.group(), text)
+    text = _RE_NON_RFC1918_IPV4.sub(MASK, text)
+    text = _RE_HIGH_ENTROPY_TOKEN.sub(
+        lambda m: MASK if len(m.group()) >= 20 and _shannon_entropy(m.group()) >= 4.2 else m.group(), text)
+    return text
+
+
+def is_clean_redacted(text: str) -> bool:
+    """`is_clean` for redacted text: a known variable *name* left after its value was masked is not a secret."""
+    return not [h for h in scan(text) if h.rule != "env_var_name"]
