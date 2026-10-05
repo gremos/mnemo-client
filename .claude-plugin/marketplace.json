@@ -15,8 +15,8 @@
       "source": {
         "source": "url",
         "url": "https://github.com/gremos/mnemo-client.git",
-        "ref": "mnemo--v2.4.2",
-        "sha": "862e047d7ca8f52a07c6fac282ddbf994cca900b"
+        "ref": "mnemo--v2.5.0",
+        "sha": "c3eb35d3cbfeb1733ea41f59ee0cde455752d10f"
       }
     }
   ]
