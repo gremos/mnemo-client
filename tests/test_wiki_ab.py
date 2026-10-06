@@ -71,6 +71,13 @@ def test_topic_matching_index_summary_hosts():
     assert m("tempdb configuration on the sql vms") == []         # no host: left to the map
 
 
+def test_index_summaries_both_link_forms(tmp_path):
+    (tmp_path / "index.md").write_text("# W\n- [[a/b]] — obsidian form\n"
+                                       "- [SQL Estate](/Platforms/LOBDB01/SQL-Estate) — LOBDB01 SQL estate: CRD01\n")
+    assert wiki_ab.index_summaries(tmp_path) == {"a/b": "obsidian form",
+                                                 "Platforms/LOBDB01/SQL-Estate": "LOBDB01 SQL estate: CRD01"}
+
+
 def test_topic_hook_points_once_per_page(tmp_path):
     (tmp_path / "pd").mkdir()
     (tmp_path / "pd" / "wiki-map.json").write_text(json.dumps(_pages(TITLES)))

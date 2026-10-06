@@ -72,13 +72,17 @@ def local_pages(root: Path | None = None) -> list[dict]:
 
 
 def index_summaries(root: Path) -> dict[str, str]:
-    """index.md's one-line summary per page ("- [[id]] — summary")."""
+    """index.md's one-line summary per page: "- [[id]] — summary" (Obsidian, Personal wiki) or
+    "- [Title](/id) — summary" (ADO page link, team wiki since 2026-10-06)."""
     try:
         lines = (root / "index.md").read_text(errors="replace").splitlines()
     except OSError:
         return {}
-    return {m.group(1): m.group(2).strip() for m in
-            (re.match(r"\s*-\s*\[\[([^\]]+)\]\]\s+—\s+(.+)", l) for l in lines) if m}
+    return {(m.group(1) or m.group(2)): m.group(3).strip() for m in
+            (_SUMMARY.match(l) for l in lines) if m}
+
+
+_SUMMARY = re.compile(r"\s*-\s*(?:\[\[([^\]|]+)\]\]|\[[^\]]*\]\(/([^)#\s]+)\))\s+—\s+(.+)")
 
 
 def title_of(preview: str) -> str | None:
@@ -101,7 +105,7 @@ def local_map_block(root: Path | None = None) -> str:
         return ""
     body = "\n".join("    " + l for l in idx.splitlines() if l.strip() and not l.startswith(("# ", "_")))
     where = f"local copy at {root} @ {sha}" if sha != "?" else f"git checkout at {root}"
-    return (f"  Wiki map ({label(root)}, {where}; page [[x]] is {root}/wiki/x.md — on a subject "
+    return (f"  Wiki map ({label(root)}, {where}; page [[x]] or (/x) is {root}/wiki/x.md — on a subject "
             f"listed here, Read the page before deciding and cite it):\n" + body)
 
 
