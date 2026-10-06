@@ -53,6 +53,24 @@ def test_topic_matching():
     assert mp("why cant tests merge on agora-poc?") == ["agora-poc — AI Lead Generation Platform"]  # leading code
 
 
+def test_topic_matching_index_summary_hosts():
+    pages = [{"id": "sql", "title": "SQL Estate after the 2026-10-03 Migration", "path": "/w/sql.md",
+              "summary": "LOBDB01 SQL estate: CRD01 disk cap, indexes, backups"},
+             {"id": "tf", "title": "Terraform Runbook", "path": "/w/tf.md", "summary": "CRD01 terraform phases"},
+             {"id": "deploy", "title": "Host Deployment", "path": "/w/deploy.md", "summary": "kiwi03/04 branches"},
+             {"id": "a", "title": "A", "path": "/w/a.md", "summary": "notes (kiwi01 / gyp.gr), ipv4 2026-10-06"},
+             {"id": "b", "title": "B", "path": "/w/b.md", "summary": "xyz01 here"},
+             {"id": "c", "title": "C", "path": "/w/c.md", "summary": "xyz01 there"},
+             {"id": "d", "title": "D", "path": "/w/d.md", "summary": "xyz01 everywhere"}]
+    m = lambda q: [p["id"] for p in wiki_ab.topic_matches(q, pages)]
+    assert m("should I raise max server memory on CRD01?") == ["sql", "tf"]   # summary host, shared by 2 pages
+    assert m("deploy to kiwi03 once diffs pass") == ["deploy"]
+    assert m("install the db on kiwi01") == []                    # parenthetical = qualifier
+    assert m("ipv4 address for 2026-10-06") == []                 # not host names
+    assert m("restart xyz01") == []                               # in 3+ summaries: names no one page
+    assert m("tempdb configuration on the sql vms") == []         # no host: left to the map
+
+
 def test_topic_hook_points_once_per_page(tmp_path):
     (tmp_path / "pd").mkdir()
     (tmp_path / "pd" / "wiki-map.json").write_text(json.dumps(_pages(TITLES)))
@@ -75,7 +93,7 @@ def test_local_source_map_and_pointer(tmp_path, monkeypatch):
     monkeypatch.setattr(wiki_ab, "LOCAL_ROOT", tmp_path)
     pages = wiki_ab.local_pages(tmp_path)
     assert pages == [{"id": "platforms/gpml01", "title": "GPML01 — gyp.gr Mail Server", "domain": "platforms",
-                      "path": str(tmp_path / "wiki" / "platforms" / "gpml01.md")}]
+                      "path": str(tmp_path / "wiki" / "platforms" / "gpml01.md"), "summary": "mail server"}]
     block = wiki_ab.map_block(pages)
     assert "local copy at" in block and "@ abcdef12" in block and "[[platforms/gpml01]] — mail server" in block
     assert "XO Company Wiki" not in block                                  # index title/subtitle dropped

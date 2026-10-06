@@ -54,16 +54,31 @@ def arm(session_id: str) -> str:
 
 
 def local_pages(root: Path | None = None) -> list[dict]:
-    """Pages of the local copy: id = path under wiki/ without .md, title = the page's H1."""
+    """Pages of the local copy: id = path under wiki/ without .md, title = the page's H1, summary = its index.md
+    line (when it has one)."""
     root, out = root or LOCAL_ROOT, []
+    summaries = index_summaries(root)
     for f in sorted((root / "wiki").rglob("*.md")):
         rel = f.relative_to(root / "wiki").with_suffix("").as_posix()
         try:
             t = title_of(f.read_text(errors="replace")[:4000]) or rel
         except OSError:
             continue
-        out.append({"id": rel, "title": t, "domain": rel.split("/")[0], "path": str(f)})
+        page = {"id": rel, "title": t, "domain": rel.split("/")[0], "path": str(f)}
+        if rel in summaries:
+            page["summary"] = summaries[rel]
+        out.append(page)
     return out
+
+
+def index_summaries(root: Path) -> dict[str, str]:
+    """index.md's one-line summary per page ("- [[id]] — summary")."""
+    try:
+        lines = (root / "index.md").read_text(errors="replace").splitlines()
+    except OSError:
+        return {}
+    return {m.group(1): m.group(2).strip() for m in
+            (re.match(r"\s*-\s*\[\[([^\]]+)\]\]\s+—\s+(.+)", l) for l in lines) if m}
 
 
 def title_of(preview: str) -> str | None:
@@ -114,6 +129,13 @@ def _tokens(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9][a-z0-9\-]{2,}", text.lower()) if w not in _GENERIC]
 
 
+_HOST = re.compile(r"\b[a-z]{2,}[0-9]{2,}[a-z0-9]*\b")     # host/system name: crd01, lobdb01, xoss01, kiwi03
+
+
+def _summary_codes(page: dict) -> set[str]:
+    return set(_HOST.findall(re.sub(r"\([^)]*\)", "", page.get("summary", "").lower())))
+
+
 def topic_matches(prompt: str, pages: list[dict], limit: int = 2) -> list[dict]:
     """Pages whose subject the prompt names: a code-like title token (digit or hyphen: gpml01, 3cx, socks5,
     xoagents01) or two title tokens together. Measured on 5,268 real prompts (2026-10-04): matching any
@@ -122,13 +144,22 @@ def topic_matches(prompt: str, pages: list[dict], limit: int = 2) -> list[dict]:
     A code names the subject only when it leads the title: a code in parentheses is a qualifier (KIWI01 in
     "Plesk / Postfix Operations (KIWI01 / gyp.gr)" hosts many systems; 0/4 real kiwi01 prompts were about
     Plesk); it still counts as an ordinary title token. Not excluded: the session's own workspace name —
-    GPML01 prompts come from a GPML01 workspace and the page helped there (replay 2026-10-04)."""
+    GPML01 prompts come from a GPML01 workspace and the page helped there (replay 2026-10-04).
+    A host name in the page's index.md summary also names its subject when at most 2 pages' summaries carry it
+    ("LOBDB01 SQL estate: CRD01 disk cap" -> crd01): 6 of 7 questions about that page got no pointer from the
+    title alone. Body text and sub-headings are not used: they mention hosts a page is not about (cardinal01 in
+    an agora page). On 4,248 real prompts (2026-10-06) the pointer fires on 5.1% (was 3.65%); new hits checked by hand."""
     words = set(re.findall(r"[a-z0-9][a-z0-9\-]{2,}", (prompt or "").lower()))
+    summary_codes = {p["id"]: _summary_codes(p) for p in pages}
+    shared = {}
+    for c in (c for s in summary_codes.values() for c in s):
+        shared[c] = shared.get(c, 0) + 1
     hits = []
     for p in pages:
         toks = set(_tokens(p["title"]))
         qualifiers = set(_tokens(" ".join(re.findall(r"\(([^)]*)\)", p["title"]))))
         codes = {t for t in toks - qualifiers if (re.search(r"\d", t) or "-" in t)}
+        codes |= {c for c in summary_codes[p["id"]] if shared[c] <= 2}
         if (codes & words) or len(toks & words) >= 2:
             hits.append(p)
     return hits[:limit]
