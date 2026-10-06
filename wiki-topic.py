@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""wiki-topic.py — UserPromptSubmit: point at the team wiki page when a prompt names its subject.
+"""wiki-topic.py — UserPromptSubmit: point at the wiki page (team, or Personal in Personal projects) when a prompt names its subject.
 
 Arm map_topic only (wiki_ab.arm). Uses the wiki map cached by the session brief (load-context.py), so it
 makes no server call; each page is pointed at once per session, at most 2 per prompt. Fails silent.
@@ -21,7 +21,7 @@ except Exception:
 session = payload.get("session_id", "")
 if not session or wiki_ab.arm(session) != "map_topic":
     sys.exit(0)
-pages = wiki_ab.load_cache()
+pages = wiki_ab.load_cache(wiki_ab.root_for(payload.get("cwd", "")))
 hits = wiki_ab.topic_matches(payload.get("prompt", ""), pages)
 if not hits:
     sys.exit(0)

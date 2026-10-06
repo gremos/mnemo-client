@@ -20,6 +20,22 @@ CACHE = Path(os.environ.get("CLAUDE_PLUGIN_DATA", os.path.expanduser("~/.mnemo")
 # Local read-only copy of the team wiki (index.md + SCHEMA.md + wiki/, stamped with the source commit), shipped from
 # the laptop's git checkout to every profile (Karpathy pattern: plain files, index first, pages opened in full).
 LOCAL_ROOT = Path(os.environ.get("MNEMO_WIKI_DIR", os.path.expanduser("~/.local/share/xo-wiki")))
+# Personal wiki (laptop only): the git checkout itself, read directly; personal and team knowledge never mix.
+PERSONAL_ROOT = Path(os.environ.get("MNEMO_PERSONAL_WIKI_DIR", os.path.expanduser("~/Documents/code/Personal/wiki")))
+PERSONAL_PREFIX = os.environ.get("MNEMO_PERSONAL_CODE_DIR", os.path.expanduser("~/Documents/code/Personal"))
+
+
+def root_for(cwd: str) -> Path:
+    """The wiki a session sees: the Personal wiki for sessions inside ~/Documents/code/Personal (when present),
+    otherwise the team wiki copy."""
+    c = os.path.normpath(cwd or "") + os.sep
+    if c.startswith(os.path.normpath(PERSONAL_PREFIX) + os.sep) and (PERSONAL_ROOT / "index.md").is_file():
+        return PERSONAL_ROOT
+    return LOCAL_ROOT
+
+
+def label(root: Path) -> str:
+    return "personal wiki" if root == PERSONAL_ROOT else "team wiki"
 _GENERIC = {"overview", "management", "standard", "standards", "operations", "common", "status", "structure",
             "platform", "conventions", "policy", "data", "guide", "phase", "team", "layer", "score", "user",
             "users", "azure", "microsoft", "shared", "infrastructure", "automation", "story", "lifecycle",
@@ -37,9 +53,9 @@ def arm(session_id: str) -> str:
     return "control" if int(hashlib.sha1((session_id or "").encode()).hexdigest(), 16) % 100 < CONTROL_SHARE else "map_topic"
 
 
-def local_pages(root: Path = LOCAL_ROOT) -> list[dict]:
+def local_pages(root: Path | None = None) -> list[dict]:
     """Pages of the local copy: id = path under wiki/ without .md, title = the page's H1."""
-    out = []
+    root, out = root or LOCAL_ROOT, []
     for f in sorted((root / "wiki").rglob("*.md")):
         rel = f.relative_to(root / "wiki").with_suffix("").as_posix()
         try:
@@ -55,34 +71,41 @@ def title_of(preview: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def map_block(pages: list[dict]) -> str:
-    """The session's wiki map: the local copy's index.md (pages are listed for the topic matcher only)."""
-    return local_map_block(LOCAL_ROOT)
+def map_block(pages: list[dict], root: Path | None = None) -> str:
+    """The session's wiki map: the wiki's own index.md (pages are listed for the topic matcher only)."""
+    return local_map_block(root or LOCAL_ROOT)
 
 
-def local_map_block(root: Path = LOCAL_ROOT) -> str:
+def local_map_block(root: Path | None = None) -> str:
     """The wiki's own index.md (every page, one line each) with the absolute page location."""
+    root = root or LOCAL_ROOT
     try:
         idx = (root / "index.md").read_text(errors="replace")
         sha = (root / ".wiki-commit").read_text().strip()[:8] if (root / ".wiki-commit").is_file() else "?"
     except OSError:
         return ""
     body = "\n".join("    " + l for l in idx.splitlines() if l.strip() and not l.startswith(("# ", "_")))
-    return (f"  Wiki map (team wiki, local copy at {root} @ {sha}; page [[x]] is {root}/wiki/x.md — on a subject "
+    where = f"local copy at {root} @ {sha}" if sha != "?" else f"git checkout at {root}"
+    return (f"  Wiki map ({label(root)}, {where}; page [[x]] is {root}/wiki/x.md — on a subject "
             f"listed here, Read the page before deciding and cite it):\n" + body)
 
 
-def save_cache(pages: list[dict]) -> None:
+def cache_path(root: Path | None = None) -> Path:
+    """One page cache per wiki, so a Personal session never overwrites the team session's pages (and vice versa)."""
+    return CACHE if root != PERSONAL_ROOT else CACHE.with_name("wiki-map-personal.json")
+
+
+def save_cache(pages: list[dict], root: Path | None = None) -> None:
     try:
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(pages))
+        cache_path(root).parent.mkdir(parents=True, exist_ok=True)
+        cache_path(root).write_text(json.dumps(pages))
     except OSError:
         pass
 
 
-def load_cache() -> list[dict]:
+def load_cache(root: Path | None = None) -> list[dict]:
     try:
-        return json.loads(CACHE.read_text())
+        return json.loads(cache_path(root).read_text())
     except (OSError, json.JSONDecodeError):
         return []
 
@@ -113,5 +136,5 @@ def topic_matches(prompt: str, pages: list[dict], limit: int = 2) -> list[dict]:
 
 def pointer_text(pages: list[dict]) -> str:
     items = "; ".join(f"{p['title']} — Read {p['path']}" for p in pages)
-    return (f"[wiki] Relevant team wiki page(s) for this request: {items}. "
+    return (f"[wiki] Relevant wiki page(s) for this request: {items}. "
             f"Open it before deciding on this subject and cite it; if it is stale or wrong, say so.")

@@ -96,3 +96,22 @@ def test_brief_uses_local_copy_without_server(tmp_path):
     topic = {"session_id": "t", "prompt": "is gpml01 healthy?"}
     assert "Read " + str(tmp_path / "xo-wiki" / "wiki" / "platforms" / "gpml01.md") in \
         _run("wiki-topic.py", tmp_path, topic, "map_topic", extra_env=env)
+
+
+def test_personal_wiki_for_personal_sessions_never_mixed(tmp_path):
+    _local_wiki(tmp_path / "xo-wiki")
+    pw = tmp_path / "pwiki"; (pw / "wiki" / "projects").mkdir(parents=True)
+    (pw / "wiki" / "projects" / "newsbeast.md").write_text("# Newsbeast\nbody\n")
+    (pw / "index.md").write_text("# Personal Wiki\n- [[projects/newsbeast]] — Newsbeast perf\n")
+    env = {"MNEMO_WIKI_DIR": str(tmp_path / "xo-wiki"), "MNEMO_PERSONAL_WIKI_DIR": str(pw),
+           "MNEMO_PERSONAL_CODE_DIR": str(tmp_path / "Personal")}
+    personal = {"session_id": "t", "cwd": str(tmp_path / "Personal" / "Newsbeast"), "source": "startup"}
+    team = {**personal, "cwd": str(tmp_path / "XO" / "agora")}
+    p = _run("wiki-map.py", tmp_path, personal, "map_topic", extra_env=env)
+    t = _run("wiki-map.py", tmp_path, team, "map_topic", extra_env=env)
+    assert "personal wiki" in p and "[[projects/newsbeast]]" in p and "gpml01" not in p
+    assert "team wiki" in t and "[[platforms/gpml01]]" in t and "newsbeast" not in t
+    # separate caches: a team-session pointer still works after a personal session started
+    q = _run("wiki-topic.py", tmp_path, {"session_id": "t2", "cwd": str(tmp_path / "XO" / "agora"),
+                                          "prompt": "is gpml01 healthy?"}, "map_topic", extra_env=env)
+    assert "gpml01.md" in q
