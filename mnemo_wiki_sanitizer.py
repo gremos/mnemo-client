@@ -35,19 +35,22 @@ _DENYLIST_NAMES: set[str] = {
 _LIVE_SECRETS: set[str] = set()
 
 
-def _load_live_secrets() -> None:
-    for env_path in (
-        os.path.expanduser("~/.claude/skills/mnemo/.env"),
-        os.path.expanduser("~/.mnemo.env"),
-    ):
+_SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASS|PWD|CREDENTIAL", re.I)
+
+
+def _load_live_secrets(paths: tuple[str, ...] = ("~/.claude/skills/mnemo/.env", "~/.mnemo.env")) -> None:
+    """Values of secret-named variables in the local env files. Settings such as MNEMO_HOST, *_PORT, *_ENDPOINT or
+    *_BASE_URL are not secrets: masking them (2026-10-06) blanked the host address in 70 infra-azure-gyp docs."""
+    for env_path in (os.path.expanduser(p) for p in paths):
         if not os.path.isfile(env_path):
             continue
         try:
             for line in open(env_path, errors="replace"):
                 line = line.strip()
                 if "=" in line and not line.startswith("#"):
-                    val = line.split("=", 1)[1].strip()
-                    if len(val) >= 8:
+                    name, val = line.split("=", 1)
+                    name, val = name.replace("export ", "").strip(), val.strip().strip("'\"")
+                    if len(val) >= 8 and _SECRET_NAME.search(name):
                         _LIVE_SECRETS.add(val)
         except Exception:
             pass
@@ -75,6 +78,30 @@ _RE_NON_RFC1918_IPV4 = re.compile(
 )
 _RE_BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9+/=_\-]{16,}")
 _RE_ENV_VAR_NAME = re.compile(r"\b([A-Z][A-Z0-9_]{4,})\s*[=:]")
+
+
+_RE_WORD_SEGMENT = re.compile(r"(?:[A-Z]{0,12}(?:[A-Z][a-z]{1,23})+|[a-z]{1,24}(?:[A-Z][a-z]{1,23})*|[A-Z]{1,12})[0-9]{0,4}"
+                              r"|[0-9]{1,10}")                                  # words, CamelCase, lowerCamel, codes, dates
+_RE_CODE_SEGMENT = re.compile(r"[a-z0-9]{1,24}|[A-Z0-9]{1,24}")                  # host/resource codes: WEU02PRDXODB01
+_RE_CAMEL_WORDS = re.compile(r"(?:[A-Z][a-z]{2,}){3,}|[a-z]{2,}(?:[A-Z][a-z]{2,}){2,}")   # one-word identifiers
+
+
+def _word_segment(p: str) -> bool:
+    if _RE_WORD_SEGMENT.fullmatch(p):
+        return True
+    return bool(_RE_CODE_SEGMENT.fullmatch(p)) and sum(ch.isdigit() for ch in p) <= (0.6 if len(p) <= 6 else 0.4) * len(p)
+
+
+def _wordlike(token: str) -> bool:
+    """A path or identifier made of words (`scripts/Invoke-EmployeeOffboarding`, `/resourceGroups/GYP-WEU-02-RES01`,
+    `-ResourceGroupName`): every segment between / - _ . = is a word shape or a mostly-letter code. Keys, tokens and
+    base64 secrets are not (2026-10-06: the entropy rule masked file paths in 139 of 254 infra-azure-gyp docs)."""
+    if "+" in token:
+        return False
+    parts = [p for p in re.split(r"[/\-_.=]+", token) if p]
+    if len(parts) == 1:
+        return bool(_RE_CAMEL_WORDS.fullmatch(parts[0]))
+    return all(_word_segment(p) for p in parts)
 
 
 def _shannon_entropy(s: str) -> float:
@@ -132,7 +159,7 @@ def scan(text: str) -> list[Hit]:
     # High-entropy tokens (20+ chars, entropy >= 4.2)
     for m in _RE_HIGH_ENTROPY_TOKEN.finditer(text):
         val = m.group()
-        if len(val) >= 20 and _shannon_entropy(val) >= 4.2:
+        if len(val) >= 20 and _shannon_entropy(val) >= 4.2 and not _wordlike(val):
             hits.append(Hit("high_entropy_token", val[:12] + "...", f"entropy={_shannon_entropy(val):.1f}"))
 
     # Known env-var names in text
@@ -175,7 +202,8 @@ def redact(text: str) -> str:
     text = _RE_AZURE_GUID.sub(MASK, text)
     text = _RE_HEX_SECRET.sub(lambda m: MASK if _shannon_entropy(m.group()) >= 3.5 else m.group(), text)
     text = _RE_HIGH_ENTROPY_TOKEN.sub(
-        lambda m: MASK if len(m.group()) >= 20 and _shannon_entropy(m.group()) >= 4.2 else m.group(), text)
+        lambda m: MASK if len(m.group()) >= 20 and _shannon_entropy(m.group()) >= 4.2 and not _wordlike(m.group())
+        else m.group(), text)
     return text
 
 
