@@ -15,7 +15,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/mnemo-cli.py" draft-lesson <<'JSON'
 {"directive": "...", "rationale": "...", "delivery": "claude_md", "project": "<project.json id>"}
 JSON
 python3 "${CLAUDE_PLUGIN_ROOT}/mnemo-cli.py" wrap --summary "..." --outcome success \
-  --project "<project.json id>" --corrections N --memory-helped yes|no
+  --project "<project.json id>" --corrections <N> --memory-helped <yes|no>
 ```
 
 Each call prints the server's JSON reply and exits non-zero on failure. For a `jit_hook` lesson add

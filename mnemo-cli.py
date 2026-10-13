@@ -53,14 +53,26 @@ MNEMO_KEY = (
 )
 _mnemo_base = (
     os.environ.get("CLAUDE_PLUGIN_OPTION_SERVER_URL")
+    # Single source since 2026-09-26: MNEMO_BASE_URL in ~/.mnemo.env (laptop and VMs).
     or (os.getenv("MNEMO_BASE_URL") or _cfg('MNEMO_BASE_URL', '')).rstrip("/")
     or os.getenv("MCP_URL", "").replace("/mcp/", "").rstrip("/")
     or f"http://{_cfg('MNEMO_HOST', 'localhost')}:{_cfg('MNEMO_PORT', '80')}"
 ).rstrip("/")
 
+# pc_id (audit only), as the hooks send it; the plugin data dir survives plugin updates.
+try:
+    with open(os.path.join(os.environ.get("CLAUDE_PLUGIN_DATA", os.path.expanduser("~/.mnemo")),
+                           "config.json")) as _cf:
+        PC_ID: str = json.load(_cf).get("pc_id", "") or ""
+except Exception:
+    PC_ID = ""
+
 
 def _post(path: str, body: dict, session_id: str | None = None) -> tuple[int, dict]:
+    # stdlib only, like the hooks: bare `python3` may be any project's interpreter, without httpx.
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {MNEMO_KEY}"}
+    if PC_ID:
+        headers["X-PC-Id"] = PC_ID
     if session_id:
         headers["X-Session-Id"] = session_id
     req = urllib.request.Request(_mnemo_base + path, data=json.dumps(body).encode(),
@@ -90,17 +102,26 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if not MNEMO_KEY:
-        print("mnemo-cli: no MNEMO_HOOK_KEY in ~/.mnemo.env", file=sys.stderr)
+        print("mnemo-cli: no Mnemo key (MNEMO_HOOK_KEY in ~/.mnemo.env, or the plugin api_token option)", file=sys.stderr)
         return 2
 
     if args.cmd == "draft-lesson":
-        status, out = _post("/cli/draft_lesson", json.load(sys.stdin))
+        try:
+            lesson = json.load(sys.stdin)
+        except ValueError as e:
+            print(f"mnemo-cli: stdin is not a JSON lesson: {e}", file=sys.stderr)
+            return 2
+        status, out = _post("/cli/draft_lesson", lesson)
     else:
         if not args.session_id:
             # Without X-Session-Id the server closes the user's latest session, not this one.
             print("mnemo-cli: no --session-id and no $CLAUDE_CODE_SESSION_ID", file=sys.stderr)
             return 2
-        _post("/cli/register_claude_session", {"claude_session_id": args.session_id}, args.session_id)
+        status, out = _post("/cli/register_claude_session", {"claude_session_id": args.session_id},
+                            args.session_id)
+        if status >= 400:
+            print(json.dumps(out))
+            return 1
         body: dict = {"summary": args.summary, "outcome": args.outcome}
         if args.project:
             body["project"] = args.project

@@ -89,6 +89,20 @@ def test_wrap_without_any_session_id_refuses(server, tmp_path):
     assert r.returncode == 2 and calls == []
 
 
+def test_sends_pc_id_like_the_hooks(server, tmp_path):
+    base, calls = server
+    (tmp_path / ".mnemo").mkdir()
+    (tmp_path / ".mnemo" / "config.json").write_text('{"pc_id": "pc-7"}')
+    _run(base, tmp_path, ["draft-lesson"], json.dumps({"directive": "d"}))
+    assert {k.lower(): v for k, v in calls[0]["headers"].items()}["x-pc-id"] == "pc-7"
+
+
+def test_bad_stdin_is_a_usage_error(server, tmp_path):
+    base, calls = server
+    r = _run(base, tmp_path, ["draft-lesson"], "not json")
+    assert r.returncode == 2 and calls == []
+
+
 def test_http_error_exits_nonzero_and_prints_body(server, tmp_path):
     base, _ = server
     r = _run(base, tmp_path, ["draft-lesson"], json.dumps({"directive": "bad"}))
