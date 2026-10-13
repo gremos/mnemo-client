@@ -7,10 +7,24 @@ description: Session close — draft lessons from corrections, batch-review pend
 
 Run this at the end of a session to capture what was learned.
 
+`draft_lesson` and `wrap_session` are server REST endpoints, not MCP tools: reach them through the
+plugin's script, which holds the key (never read `~/.mnemo.env` yourself):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/mnemo-cli.py" draft-lesson <<'JSON'
+{"directive": "...", "rationale": "...", "delivery": "claude_md", "project": "<project.json id>"}
+JSON
+python3 "${CLAUDE_PLUGIN_ROOT}/mnemo-cli.py" wrap --summary "..." --outcome success \
+  --project "<project.json id>" --corrections N --memory-helped yes|no
+```
+
+Each call prints the server's JSON reply and exits non-zero on failure. For a `jit_hook` lesson add
+`"triggers": [{"tool_name": "Bash", "trigger_kind": "bash_substr", "trigger_pattern": "..."}]`.
+
 ## Procedure
 
 1. **Scan the conversation for corrections** — any time the user said "no", "wrong", "don't do that", or corrected your output.
-   For each correction, call `draft_lesson()` — the server handles dedup.
+   For each correction, run `mnemo-cli.py draft-lesson` — the server handles dedup.
    Never call `save_memory(type="anti-pattern")` — use `draft_lesson` instead.
 
 2. **Judge whether retrieved memory materially helped this session** — did anything
@@ -19,8 +33,8 @@ Run this at the end of a session to capture what was learned.
    Answer honestly; "n/a, nothing was retrieved" is a legitimate `no`. This is a
    self-report signal, not a graded test — don't strain for a `yes`.
 
-3. **Call `wrap_session`** with a brief summary of what was accomplished, plus
-   `memory_helped: true/false` from step 2 (omit only if truly undecidable — e.g.
+3. **Run `mnemo-cli.py wrap`** with a brief summary of what was accomplished, plus
+   `--memory-helped yes|no` from step 2 (omit only if truly undecidable — e.g.
    a near-empty session with no retrieval at all).
    The server auto-promotes up to 20 pending lessons that pass the quality gate
    (directive ≥ 30 chars, rationale ≥ 20 chars, imperative verb for claude_md,

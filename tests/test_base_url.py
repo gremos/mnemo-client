@@ -12,7 +12,7 @@ import sys
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-HOOKS = ["track-correction.py", "load-context.py", "wrap-session-bg.py"]
+HOOKS = ["track-correction.py", "load-context.py", "wrap-session-bg.py", "mnemo-cli.py"]
 ENV_KEYS = ("CLAUDE_PLUGIN_OPTION_SERVER_URL", "MCP_URL", "MNEMO_HOST", "MNEMO_PORT", "MNEMO_BASE_URL")
 
 
