@@ -1,5 +1,5 @@
 """Hooks must resolve the Mnemo server from MNEMO_BASE_URL (~/.mnemo.env), the single client source
-since 2026-09-26. They used to fall back to localhost:80, which dropped every correction on the VMs.
+since 2026-09-26 (mnemo-cli.py, which memsave runs, resolves it the same way). They used to fall back to localhost:80, which dropped every correction on the VMs.
 
 Each hook resolves `_mnemo_base = ( ... ).rstrip("/")` at module top level; the test executes the file
 up to and including that block in a fresh namespace with HOME pointing at a temp dir, so nothing is
@@ -12,7 +12,7 @@ import sys
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-HOOKS = ["track-correction.py", "load-context.py", "wrap-session-bg.py"]
+HOOKS = ["track-correction.py", "load-context.py", "wrap-session-bg.py", "mnemo-cli.py"]
 ENV_KEYS = ("CLAUDE_PLUGIN_OPTION_SERVER_URL", "MCP_URL", "MNEMO_HOST", "MNEMO_PORT", "MNEMO_BASE_URL")
 
 
