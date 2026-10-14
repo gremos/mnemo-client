@@ -13,10 +13,12 @@ MEM = {"id": "11111111-1111-1111-1111-111111111111", "type": "anti-pattern", "im
 
 
 class _MCP(BaseHTTPRequestHandler):
+    MEMS, LESSONS = [MEM], []
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         name = body.get("params", {}).get("name")
-        text = json.dumps([MEM] if name == "get_memories" else [])
+        text = json.dumps(self.MEMS if name == "get_memories" else self.LESSONS if name == "get_active_lessons" else [])
         out = f"data: {json.dumps({'jsonrpc': '2.0', 'id': body.get('id'), 'result': {'content': [{'type': 'text', 'text': text}]}})}\n\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -67,3 +69,27 @@ def test_brief_in_session_worktree_names_the_repo(tmp_path):
     srv.shutdown()
     ctx = json.loads(r.stdout[r.stdout.index("{"):])["hookSpecificOutput"]["additionalContext"]
     assert 'brief for "infra-azure-gyp"' in ctx, ctx[:120]
+
+
+def test_lessons_come_first_when_memories_fill_the_budget(tmp_path):
+    """2026-10-14: 14 of 14 interactive briefs in 30 days showed 0 lessons: pitfalls and context used the
+    2000-char budget before the directive section was reached."""
+    mems = [{**MEM, "id": f"{i:08d}-1111-1111-1111-111111111111", "preview": f"pitfall {i} " + "x" * 190}
+            for i in range(20)]
+    lessons = [{"directive": "Never read a .env file in any form", "severity": "warn"},
+               {"directive": "Diff app/ against kiwi01 before deploying", "severity": "warn"}]
+
+    class _Full(_MCP):
+        MEMS, LESSONS = mems, lessons
+
+    srv = HTTPServer(("127.0.0.1", 0), _Full)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    (tmp_path / ".mnemo.env").write_text(f"MNEMO_BASE_URL=http://127.0.0.1:{srv.server_port}\nMNEMO_HOOK_KEY=k\n")
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    r = subprocess.run([sys.executable, str(ROOT / "load-context.py")], env=env, capture_output=True, text=True,
+                       input=json.dumps({"session_id": "t", "cwd": str(tmp_path), "source": "startup"}), timeout=30)
+    srv.shutdown()
+    ctx = json.loads(r.stdout[r.stdout.index("{"):])["hookSpecificOutput"]["additionalContext"]
+    assert "Never read a .env file" in ctx and "Diff app/ against kiwi01" in ctx, ctx[:300]
+    assert ctx.index("Directives from past corrections") < ctx.index("Known pitfalls")
+    assert "pitfall 0" in ctx                                    # memories still fill what is left

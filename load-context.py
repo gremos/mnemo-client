@@ -546,6 +546,21 @@ context_mems = [m for m in memories_sorted if m.get("type") != "anti-pattern"]
 CHAR_BUDGET = 2000
 char_used = 0
 
+# Lessons first: drafted from real corrections, at most 5 x 160 chars. Last in the budget, they never fit a full
+# brief (0 of 14 interactive briefs showed one, 2026-10-14).
+directive_lines: list[str] = []
+for _les in active_lessons[:5]:
+    _sev = _les.get("severity", "warn")
+    _directive = (_les.get("directive") or "")[:160].replace("\n", " ")
+    if not _directive:
+        continue
+    _prefix = "DENY" if _sev == "deny" else "warn"
+    _dline = f"    • [{_prefix}] {_directive}"
+    if char_used + len(_dline) > CHAR_BUDGET:
+        break
+    directive_lines.append(_dline)
+    char_used += len(_dline)
+
 pitfall_lines = []
 for m in pitfalls:
     imp = m.get("importance", "?")
@@ -566,19 +581,6 @@ for m in context_mems:
         break
     context_lines.append(line)
     char_used += len(line)
-
-directive_lines: list[str] = []
-for _les in active_lessons[:5]:
-    _sev = _les.get("severity", "warn")
-    _directive = (_les.get("directive") or "")[:160].replace("\n", " ")
-    if not _directive:
-        continue
-    _prefix = "DENY" if _sev == "deny" else "warn"
-    _dline = f"    • [{_prefix}] {_directive}"
-    if char_used + len(_dline) > CHAR_BUDGET:
-        break
-    directive_lines.append(_dline)
-    char_used += len(_dline)
 
 proj_label = f'"{project}"' if project else "all projects"
 if not pitfall_lines and not context_lines and not directive_lines:
