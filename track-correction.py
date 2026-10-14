@@ -16,6 +16,12 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from headless import is_headless  # noqa: E402
+
+if is_headless():                               # a claude -p task prompt is not a user correction
+    sys.exit(0)
+
 # ---------------------------------------------------------------------------
 # Read hook payload
 # ---------------------------------------------------------------------------

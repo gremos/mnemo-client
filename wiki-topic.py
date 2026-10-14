@@ -13,6 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wiki_ab  # noqa: E402
+from headless import is_headless  # noqa: E402
+
+if is_headless():                               # claude -p: nobody reads the pointer
+    sys.exit(0)
 
 try:
     payload = json.load(sys.stdin)
