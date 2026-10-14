@@ -32,9 +32,9 @@ Logs: `~/.local/share/compile-wiki-auto/`
 
 ## What it does
 
-- **SessionStart hook** — loads top memories + active lesson directives as context
+- **SessionStart hook** — loads top memories + lesson directives as context (interactive sessions only: `claude -p` runs get nothing, see `headless.py`)
 - **PreToolUse hook** — evaluates Bash commands against active lessons
-- **UserPromptSubmit hook** — detects user corrections for the RL loop
+- **UserPromptSubmit hook** — detects user corrections for the RL loop (interactive sessions only)
 - **SessionEnd hook** — wraps the session once at exit (skipped when worklog is installed; worklog sends the wrap): extracts corrections/decisions via LLM, calls `wrap_session`, auto-drafts wiki entries for notable sessions
 - **`/mnemo:memload`** — manual context reload after `/compact`
 - **`/mnemo:memsave`** — manual session close: drafts lessons and wraps through `mnemo-cli.py` (`/cli/draft_lesson`, `/cli/wrap_session`), which holds the key

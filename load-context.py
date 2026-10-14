@@ -36,7 +36,10 @@ source = payload.get("source", "startup")
 # wiki map, which the map arms re-send (wiki_ab.py; the summary drops it).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wiki_ab  # noqa: E402
+from headless import is_headless  # noqa: E402
 
+if is_headless():                               # claude -p: nobody reads the brief
+    sys.exit(0)
 _wiki_arm = wiki_ab.arm(session_id)
 if source == "compact":                         # the wiki map is re-sent by wiki-map.py
     sys.exit(0)
@@ -585,7 +588,7 @@ else:
     if directive_lines:
         omitted_d = len(active_lessons) - len(directive_lines)
         suffix = f" (+{omitted_d} omitted)" if omitted_d else ""
-        lines.append(f"  Active directives — ENFORCED{suffix}:")
+        lines.append(f"  Directives from past corrections{suffix}:")
         lines.extend(directive_lines)
     if pitfall_lines:
         omitted_p = len(pitfalls) - len(pitfall_lines)
