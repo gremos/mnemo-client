@@ -13,10 +13,12 @@ MEM = {"id": "11111111-1111-1111-1111-111111111111", "type": "anti-pattern", "im
 
 
 class _MCP(BaseHTTPRequestHandler):
+    MEMS, LESSONS = [MEM], []
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         name = body.get("params", {}).get("name")
-        text = json.dumps([MEM] if name == "get_memories" else [])
+        text = json.dumps(self.MEMS if name == "get_memories" else self.LESSONS if name == "get_active_lessons" else [])
         out = f"data: {json.dumps({'jsonrpc': '2.0', 'id': body.get('id'), 'result': {'content': [{'type': 'text', 'text': text}]}})}\n\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -78,21 +80,12 @@ def test_lessons_come_first_when_memories_fill_the_budget(tmp_path):
                {"directive": "Diff app/ against kiwi01 before deploying", "severity": "warn"}]
 
     class _Full(_MCP):
-        def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            name = body.get("params", {}).get("name")
-            text = json.dumps(mems if name == "get_memories" else lessons if name == "get_active_lessons" else [])
-            out = f"data: {json.dumps({'jsonrpc': '2.0', 'id': body.get('id'), 'result': {'content': [{'type': 'text', 'text': text}]}})}\n\n"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("mcp-session-id", "s1")
-            self.end_headers()
-            self.wfile.write(out.encode())
+        MEMS, LESSONS = mems, lessons
 
     srv = HTTPServer(("127.0.0.1", 0), _Full)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     (tmp_path / ".mnemo.env").write_text(f"MNEMO_BASE_URL=http://127.0.0.1:{srv.server_port}\nMNEMO_HOOK_KEY=k\n")
-    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "CLAUDE_CODE_ENTRYPOINT": "cli"}
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
     r = subprocess.run([sys.executable, str(ROOT / "load-context.py")], env=env, capture_output=True, text=True,
                        input=json.dumps({"session_id": "t", "cwd": str(tmp_path), "source": "startup"}), timeout=30)
     srv.shutdown()
