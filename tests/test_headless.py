@@ -72,3 +72,15 @@ def test_hooks_stay_silent_for_claude_p(tmp_path):
         assert hits
     finally:
         srv.shutdown()
+
+
+def test_greek_correction_reaches_mnemo(tmp_path):
+    hits = []
+    srv = _server(hits)
+    (tmp_path / ".mnemo.env").write_text(f"MNEMO_BASE_URL=http://127.0.0.1:{srv.server_port}\nMNEMO_HOOK_KEY=k\n")
+    try:
+        _run("track-correction.py", tmp_path, {"session_id": "t", "prompt": "όχι, λάθος αρχείο"}, "cli")
+        _run("track-correction.py", tmp_path, {"session_id": "t", "prompt": "δες τα αρχεία στο gpml01"}, "cli")
+    finally:
+        srv.shutdown()
+    assert [h for h in hits if "log_user_correction" in h] and len(hits) == 1, hits
