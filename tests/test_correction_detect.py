@@ -18,6 +18,7 @@ from correction_detect import is_correction  # noqa: E402
     "ξέχασες το README", "πάλι το ίδιο λάθος",
     "νο τηατ'σ ωρονγ",                                                       # "no that's wrong" on the Greek layout
     "δον'τ δο τηατ",                                                          # "don't do that"
+    "νοτ ;θιτε",                                                              # "not quite" (; is the q key)
 ])
 def test_corrections_detected(text):
     assert is_correction(text), text
@@ -27,7 +28,7 @@ def test_corrections_detected(text):
     "proceed", "check progress", "looks good, thanks", "no problem", "that's right",
     "προψεεδ", "ψηεψκ προγρεσσ", "στατθσ", "/μοδελ",                          # English on the Greek layout, no correction
     "συνδέσου στον gpml01 και δες τα αρχεία", "όχι απαραίτητα, όπως θέλεις", "δεν πειράζει",
-    "σωστό, συνέχισε", "τέλεια", "για να μην χαθούν τα δεδομένα κράτα backup",
+    "σωστό, συνέχισε", "τέλεια", "για να μην χαθούν τα δεδομένα κράτα backup", "ωστε να μην το κανεις",
     "add also εγγραφές χωρίς ΑΦΜ", "ποιος είναι ο αριθμός των κομμωτηρίων",
     "ο server δεν απαντάει από χθες, έλεγξε το nginx",                       # a fault report, not a correction of Claude
     "το vpn δεν δουλεύει από το πρωί", "όχι",                                 # dropped patterns (see correction_detect)

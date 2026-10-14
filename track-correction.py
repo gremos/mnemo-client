@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -41,7 +40,10 @@ claude_session_id: str = payload.get("session_id", "")
 # Correction heuristic
 # ---------------------------------------------------------------------------
 
-from correction_detect import is_correction  # noqa: E402
+try:
+    from correction_detect import is_correction  # noqa: E402
+except Exception:
+    sys.exit(0)
 
 if not is_correction(user_prompt):
     sys.exit(0)
