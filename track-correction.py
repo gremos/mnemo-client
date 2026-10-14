@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -41,45 +40,12 @@ claude_session_id: str = payload.get("session_id", "")
 # Correction heuristic
 # ---------------------------------------------------------------------------
 
-_text = user_prompt.strip().lower()[:500]
+try:
+    from correction_detect import is_correction  # noqa: E402
+except Exception:
+    sys.exit(0)
 
-_FP_PATTERNS = [
-    r"\bno\s+(problem|worries|issue|big deal|way)\b",
-    r"\bno\s+need\b",
-    r"that'?s\s+(fine|great|good|perfect|ok|okay|correct|right|exactly)\b",
-    r"\bdon'?t\s+(worry|bother|hesitate|mind|sweat)\b",
-    r"\b(never ?mind|no need to)\b",
-]
-
-_CORRECTION_PATTERNS = [
-    r"^\s*no[.!,]?\s*$",
-    r"\b(no|nope)[,.!]?\s+(that|this|you|don'?t|please|stop|more|again)\b",
-    r"\bdon'?t\s+(do|say|use|write|add|include|create|make|change|remove|delete|run|call)\b",
-    r"\bstop\s+(doing|using|adding|writing|saying|that|it|this)\b",
-    r"\b(wrong|incorrect|that'?s not right|not correct)\b",
-    r"\b(undo|revert|rollback|roll back)\b",
-    r"\bthat'?s\s+(not|wrong)\b",
-    r"\bactually[,\s]+(no|don'?t|use|do|instead)\b",
-    r"\bi\s+(said|meant|asked for|told you|wanted)\b",
-    r"\bplease\s+(stop|don'?t)\b",
-    # Missed phrasings from session history
-    r"\bwait[,.]?\s*(no|actually|that|hold on)\b",
-    r"\bno[,.]?\s+actually\b",
-    r"\bnot\s+quite\b",
-    r"\b(you\s+)?(missed|forgot|skipped)\s+(the|that|this|a|to)\b",
-    r"\bthat\s+(doesn'?t|didn'?t|won'?t)\s+work\b",
-    r"\bthat'?s\s+(not\s+what\s+i|incomplete|not\s+right)\b",
-    r"\bthat'?s\s+not\s+what\s+i\s+(meant|asked|wanted|said)\b",
-]
-
-
-def _is_correction(text: str) -> bool:
-    if any(re.search(p, text) for p in _FP_PATTERNS):
-        return False
-    return any(re.search(p, text) for p in _CORRECTION_PATTERNS)
-
-
-if not _is_correction(_text):
+if not is_correction(user_prompt):
     sys.exit(0)
 
 # ---------------------------------------------------------------------------
