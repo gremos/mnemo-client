@@ -25,8 +25,13 @@ except Exception:
 session = payload.get("session_id", "")
 if not session or wiki_ab.arm(session) != "map_topic":
     sys.exit(0)
+prompt = payload.get("prompt", "")
+# Only prompts a human typed: subagent hand-backs and task notifications fired 47 of 75 pointers on 101, and 1 of
+# their 50 pages was read (2026-10-15).
+if prompt.lstrip().startswith(("Another Claude session sent a message", "<task-notification>")):
+    sys.exit(0)
 pages = wiki_ab.load_cache(wiki_ab.root_for(payload.get("cwd", "")))
-hits = wiki_ab.topic_matches(payload.get("prompt", ""), pages)
+hits = wiki_ab.topic_matches(prompt, pages)
 if not hits:
     sys.exit(0)
 state = wiki_ab.CACHE.parent / "wiki-topic" / f"{session}.json"

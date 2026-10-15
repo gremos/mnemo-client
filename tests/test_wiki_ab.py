@@ -88,6 +88,18 @@ def test_topic_hook_points_once_per_page(tmp_path):
     assert _run("wiki-topic.py", tmp_path, {**p, "session_id": "s2"}, "control") == ""   # other arms: nothing
 
 
+def test_topic_hook_skips_agent_messages_and_task_notifications(tmp_path):
+    """2026-10-15: on 101, 47 of 75 pointers fired on subagent hand-backs and task notifications; 1 of their 50
+    pages was read. Only prompts a human typed get a pointer."""
+    (tmp_path / "pd").mkdir()
+    (tmp_path / "pd" / "wiki-map.json").write_text(json.dumps(_pages(TITLES)))
+    for prompt in ("Another Claude session sent a message:\n<agent-message>restart the 3cx trunk",
+                   "<task-notification>\n<task-id>b1</task-id> restart the 3cx trunk"):
+        assert _run("wiki-topic.py", tmp_path, {"session_id": "s", "prompt": prompt}, "map_topic") == ""
+    assert "Telephony — 3CX PBX" in _run("wiki-topic.py", tmp_path, {"session_id": "s", "prompt": "restart the 3cx trunk"},
+                                          "map_topic")                     # the page was not marked as pointed
+
+
 def _local_wiki(root):
     (root / "wiki" / "platforms").mkdir(parents=True)
     (root / "wiki" / "platforms" / "gpml01.md").write_text("---\ntags: [x]\n---\n# GPML01 — gyp.gr Mail Server\nbody\n")
