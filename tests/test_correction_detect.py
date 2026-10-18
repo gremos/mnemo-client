@@ -35,3 +35,14 @@ def test_corrections_detected(text):
 ])
 def test_non_corrections_ignored(text):
     assert not is_correction(text), text
+
+
+def test_writing_style_feedback_is_a_correction():
+    """101, 2026-10-14: a legal-notice register correction was never captured, so Greek-writing corrections had no trend."""
+    from correction_detect import is_correction
+    real = ("«Το μήνυμα αποστέλλεται μία φορά» → «Στέλνουμε αυτό το μήνυμα μία φορά». they doesn reflect the "
+            "communication style for the specific web seatch what is the correcy tone in greek communication")
+    assert is_correction(real)
+    assert is_correction("this doesn't read like Greek, it reads translated")
+    assert is_correction("Δεν ακούγεται φυσικό, είναι μεταφρασμένο")
+    assert not is_correction("make the tone match the brand guide")

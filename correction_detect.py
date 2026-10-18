@@ -38,6 +38,15 @@ _CORRECTION_PATTERNS = [
     r"\bthat'?s\s+not\s+what\s+i\s+(meant|asked|wanted|said)\b",
 ]
 
+# Feedback on writing: style, tone, register (101 2026-10-14: "they doesn reflect the communication style").
+# Checked on the typed text only: on Greek-layout text they matched 2 non-corrections (eval 2026-10-18).
+_STYLE_PATTERNS = [
+    r"\b(doesn'?t|doesn|don'?t|didn'?t|does\s+not|do\s+not)\s+(reflect|match|fit|follow|sound\s+like|read\s+like)\s+"
+    r"(the\s+|our\s+|a\s+)?(\w+\s+)?(style|tone|register|voice|communication|greek|native)\b",
+    r"\b(wrong|not\s+the\s+right|not\s+the\s+correct|not\s+a\s+good)\s+(tone|style|register|wording)\b",
+    r"\breads?\s+(translated|unnatural|weak|like\s+a\s+translation)\b",
+]
+
 # Greek, matched on _fold(text): lower case, accents stripped, ς -> σ.
 _GR_FP_PATTERNS = [
     r"\bδεν\s+(πειραζ|εχει\s+σημασια)",
@@ -61,6 +70,9 @@ _GR_CORRECTION_PATTERNS = [
     r"\b(ακομα|ακομη)\s+δεν\b",
     r"\b(ξεχασεσ|παρελειψεσ|εχασεσ)\b",
     r"\bπαλι\s+(το\s+ιδιο|λαθοσ|δεν)\b",
+    # Writing critique: «δεν ακούγεται / δεν ταιριάζει / δεν αποδίδει», «μεταφρασμένο».
+    r"\bδεν\s+(ακουγεται|ταιριαζ|αντικατοπτριζ|αποδιδ|στεκ)",
+    r"\bμεταφρασμεν|\bσαν\s+μεταφραση\b",
 ]
 
 # Greek keyboard layout -> the Latin key under each letter.
@@ -81,7 +93,7 @@ def _english(text: str) -> bool:
 
 def is_correction(text: str) -> bool:
     text = text.strip().lower()[:500]
-    if _english(text):
+    if _english(text) or any(re.search(p, text) for p in _STYLE_PATTERNS):
         return True
     if not _GREEK.search(text):
         return False
