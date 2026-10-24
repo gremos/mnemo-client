@@ -152,3 +152,15 @@ def test_personal_wiki_for_personal_sessions_never_mixed(tmp_path):
     q = _run("wiki-topic.py", tmp_path, {"session_id": "t2", "cwd": str(tmp_path / "XO" / "agora"),
                                           "prompt": "is gpml01 healthy?"}, "map_topic", extra_env=env)
     assert "gpml01.md" in q
+
+
+def test_hook_texts_keep_the_contract_the_mnemo_audits_read(tmp_path, monkeypatch):
+    """Mnemo scripts/replay/harvest.py (weekly wiki A/B) and scripts/audit/delivery.py parse these texts with the
+    regexes below. A rewording here silently zeroes the A/B readout (2.5.3 did, unnoticed 18 days): change both."""
+    import re
+    _local_wiki(tmp_path)
+    hits = [{"title": "GPML01", "path": str(tmp_path / "wiki" / "platforms" / "gpml01.md")}]
+    assert re.search(r"\[wiki\] Relevant (?:team )?wiki page", wiki_ab.pointer_text(hits))
+    assert re.search(r"Wiki map \((?:team|personal) wiki", wiki_ab.local_map_block(tmp_path))
+    monkeypatch.setattr(wiki_ab, "PERSONAL_ROOT", tmp_path)
+    assert re.search(r"Wiki map \((?:team|personal) wiki", wiki_ab.local_map_block(tmp_path))
