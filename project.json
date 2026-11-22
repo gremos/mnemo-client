@@ -5,6 +5,7 @@
   "portfolio": "personal",
 
   "project": {"language": "python", "remoteClass": "github", "team": false},
+  "test": {"command": "/usr/bin/python3 -m pytest tests -q", "timeout": 180},
   "ship": {
     "autoship": true,
     "autopush": true,
