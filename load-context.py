@@ -446,49 +446,47 @@ try:
         # tool, so the MCP tools/call always failed (wasted round-trip). Session
         # attribution now rides the X-Session-Id header set above.
 
-        args: dict = {"limit": 15, "scope": "both"}
-        if _brief_arm == "full":                    # every curated memory, no query ranking (brief_ab.py)
-            args = {"limit": brief_ab.PER_CALL, "scope": "both", "min_importance": 1}
-        elif _query:
-            args["query"] = _query
-            args["min_importance"] = 4
-        else:
-            args["min_importance"] = 5
-        if _brief_project:
-            args["project"] = _brief_project
+        def _get_mems(a: dict, rpc_id: int) -> list:
+            """One get_memories call; raises on a tool error (e.g. an old server rejecting preview_chars)."""
+            resp = client.post(MCP_URL, headers=_mcp_headers,
+                               json={"jsonrpc": "2.0", "id": rpc_id, "method": "tools/call",
+                                     "params": {"name": "get_memories", "arguments": a}})
+            resp.raise_for_status()
+            res = _parse_sse(resp.text).get("result", {})
+            if res.get("isError"):
+                raise ValueError("get_memories tool error")
+            c = res.get("content", [])
+            raw = c[0].get("text", "[]") if isinstance(c, list) and c else "[]"
+            out = json.loads(raw) if isinstance(raw, str) else []
+            return out if isinstance(out, list) else []
 
-        mem_resp = client.post(
-            MCP_URL,
-            headers=_mcp_headers,
-            json={
-                "jsonrpc": "2.0", "id": 2,
-                "method": "tools/call",
-                "params": {"name": "get_memories", "arguments": args},
-            },
-        )
-        mem_resp.raise_for_status()
+        if _brief_arm == "full":
+            # brief_ab.py: this project's memories, then every project's, whole and all of them; a server older
+            # than preview_chars gets today's 50-cap call instead of losing the brief.
+            def _full(a: dict, rpc_id: int) -> list:
+                try:
+                    return _get_mems({**a, **brief_ab.PAGE}, rpc_id)
+                except Exception:
+                    return _get_mems({**a, "limit": brief_ab.OLD_CAP}, rpc_id)
 
-        data = _parse_sse(mem_resp.text)
-        content = data.get("result", {}).get("content", [])
-        if isinstance(content, list) and content:
-            raw = content[0].get("text", "[]")
-            memories = json.loads(raw) if isinstance(raw, str) else []
-
-        # Full arm: this project's memories, then every project's (each call is capped at 50 server-side).
-        if _brief_arm == "full" and args.get("project") != "*":
+            base = {"scope": "both", "min_importance": 1}
+            own = _full({**base, "project": _brief_project}, 2) if _brief_project and _brief_project != "*" else []
             try:
-                more = client.post(
-                    MCP_URL, headers=_mcp_headers,
-                    json={"jsonrpc": "2.0", "id": 7, "method": "tools/call",
-                          "params": {"name": "get_memories", "arguments": {**args, "project": "*"}}},
-                )
-                more.raise_for_status()
-                mc = _parse_sse(more.text).get("result", {}).get("content", [])
-                if isinstance(mc, list) and mc:
-                    raw = mc[0].get("text", "[]")
-                    memories = brief_ab.merge(memories, json.loads(raw) if isinstance(raw, str) else [])
+                every = _full({**base, "project": "*"}, 7)
             except Exception:
-                pass
+                every = []
+            memories = brief_ab.merge(own, every)
+            args = {**base, "project": "*"}          # nothing left for the cross-project fallback below
+        else:
+            args: dict = {"limit": 15, "scope": "both"}
+            if _query:
+                args["query"] = _query
+                args["min_importance"] = 4
+            else:
+                args["min_importance"] = 5
+            if _brief_project:
+                args["project"] = _brief_project
+            memories = _get_mems(args, 2)
 
         # A repo can still hold no knowledge memories (a workspace repo like XO/ files only
         # session episodes under its name) -> fall back to the cross-project brief.

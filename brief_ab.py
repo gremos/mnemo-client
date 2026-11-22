@@ -12,8 +12,10 @@ import os
 
 ARMS = ("brief", "full")
 CONTROL_SHARE = 20      # % of sessions on the old brief
-FULL_BUDGET = 24000     # chars for the full arm's memory lines (~6k tokens); lessons and pending keep their own budgets
-PER_CALL = 50           # get_memories' server-side cap
+FULL_BUDGET = 64000     # chars (~16k tokens, cached after the first turn): room for a ~150-memory store at 400 chars, as
+                        # replayed; lessons and pending keep their own budgets
+PAGE = {"limit": 200, "preview_chars": 400}   # Mnemo server >= ticket 27: whole memories, bigger page
+OLD_CAP = 50            # get_memories' cap on older servers
 
 
 def arm(session_id: str) -> str:

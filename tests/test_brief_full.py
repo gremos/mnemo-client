@@ -26,6 +26,7 @@ def _mem(i, project="p"):
 class _MCP(BaseHTTPRequestHandler):
     calls: list = []
     MEMS = [_mem(i) for i in range(60)]
+    OLD_SERVER = False                        # an old server rejects the unknown preview_chars argument
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -33,9 +34,14 @@ class _MCP(BaseHTTPRequestHandler):
         if p.get("name"):
             _MCP.calls.append((p["name"], p.get("arguments", {})))
         args = p.get("arguments", {})
-        mems = self.MEMS[:args.get("limit", 10)] if p.get("name") == "get_memories" and not args.get("tags") else []
-        text = json.dumps(mems)
-        out = f"data: {json.dumps({'jsonrpc': '2.0', 'id': body.get('id'), 'result': {'content': [{'type': 'text', 'text': text}]}})}\n\n"
+        if self.OLD_SERVER and "preview_chars" in args:
+            res = {"content": [{"type": "text", "text": "Unexpected keyword argument preview_chars"}], "isError": True}
+        else:
+            cap = 200 if args.get("preview_chars") else 50
+            mems = (self.MEMS[:min(cap, args.get("limit", 10))]
+                    if p.get("name") == "get_memories" and not args.get("tags") else [])
+            res = {"content": [{"type": "text", "text": json.dumps(mems)}]}
+        out = f"data: {json.dumps({'jsonrpc': '2.0', 'id': body.get('id'), 'result': res})}\n\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("mcp-session-id", "s1")
@@ -64,11 +70,23 @@ def _run(tmp_path, arm):
 def test_full_arm_shows_every_memory_untruncated(tmp_path):
     ctx, calls = _run(tmp_path, "full")
     assert "arm: full" in ctx
-    for i in range(50):                       # the server returns at most 50 per call; all of them, full preview
+    for i in range(60):                       # whole memories, all of them
         assert f"fact-{i} " in ctx and f"end-{i}" in ctx, i
     gm = [a for n, a in calls if n == "get_memories" and not a.get("tags")]
     assert {a.get("project") for a in gm} >= {"p", "*"}
-    assert all(a.get("limit") == 50 and a.get("min_importance") == 1 and "query" not in a for a in gm)
+    assert all(a.get("limit") == 200 and a.get("preview_chars") == 400 and a.get("min_importance") == 1
+               and "query" not in a for a in gm)
+
+
+def test_full_arm_falls_back_on_an_old_server(tmp_path):
+    _MCP.OLD_SERVER = True
+    try:
+        ctx, calls = _run(tmp_path, "full")
+    finally:
+        _MCP.OLD_SERVER = False
+    assert "arm: full" in ctx and "fact-0 " in ctx          # still a brief, from the 50-cap call
+    gm = [a for n, a in calls if n == "get_memories" and not a.get("tags")]
+    assert any("preview_chars" not in a and a.get("limit") == 50 for a in gm)
 
 
 def test_brief_arm_keeps_the_old_brief(tmp_path):
