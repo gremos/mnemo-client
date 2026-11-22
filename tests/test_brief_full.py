@@ -2,8 +2,8 @@
 
 Prompt replay: on 40 real prompts that need a stored memory, the 15-memory / 80-char brief scored like no memory
 (22.5% vs 17.5% on Opus 5.5), the whole curated catalog at session start 77.5% (Sonnet 5.5), per-prompt retrieval 40-52%.
-The full arm shows every curated memory get_memories returns (this project, then all projects; 50 each, no importance
-floor) at the server's full preview length. 20% of sessions stay on the old brief for the live readout.
+The full arm shows every curated memory get_memories returns (this project, then all projects; 50 each, min_importance
+1) at the server's full preview length. 20% of sessions stay on the old brief, whose header now also names its arm.
 """
 import json
 import pathlib
@@ -77,6 +77,20 @@ def test_brief_arm_keeps_the_old_brief(tmp_path):
     assert "end-0" not in ctx                 # 80-char previews, as before
     gm = [a for n, a in calls if n == "get_memories" and not a.get("tags")]
     assert gm[0].get("limit") == 15
+
+
+def test_project_memories_survive_the_budget_first():
+    proj = [{"id": "p1", "type": "note", "importance": 2, "preview": "project-note " + "z" * 300}]
+    other = [{"id": f"o{i}", "type": "anti-pattern", "importance": 9, "preview": f"other-{i} " + "z" * 300}
+             for i in range(10)]
+    lines, _ = brief_ab.full_lines(brief_ab.merge(proj, other), budget=700)
+    assert "project-note" in lines[0]
+
+
+def test_full_lines_survives_malformed_rows():
+    lines, omitted = brief_ab.full_lines([{"type": "note", "importance": "?", "preview": "ok-row"}, "junk",
+                                          {"type": "episode", "preview": "session summary"}])
+    assert len(lines) == 1 and "ok-row" in lines[0] and omitted == 0
 
 
 def test_arm_split_is_stable_and_mostly_full():

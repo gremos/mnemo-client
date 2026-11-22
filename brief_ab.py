@@ -25,30 +25,39 @@ def arm(session_id: str) -> str:
 
 
 def merge(*lists: list[dict]) -> list[dict]:
-    """First occurrence wins (this project's memories before the cross-project ones)."""
+    """First occurrence wins; each row keeps `_src`, the index of the list it came from, so full_lines keeps this
+    project's memories (list 0) ahead of the cross-project ones when the budget cuts."""
     seen, out = set(), []
-    for lst in lists:
+    for src, lst in enumerate(lists):
         for m in lst or []:
+            if not isinstance(m, dict):
+                continue
             k = m.get("id") or m.get("preview")
             if k not in seen:
                 seen.add(k)
-                out.append(m)
+                out.append({**m, "_src": src})
     return out
 
 
 def full_lines(mems: list[dict], budget: int = FULL_BUDGET) -> tuple[list[str], int]:
     """One line per memory, full preview, anti-patterns and decisions first; returns (lines, omitted)."""
     prio = {"anti-pattern": 0, "decision": 1, "primer": 2, "solution": 3, "command": 4, "note": 5}
-    ordered = sorted(mems, key=lambda m: (prio.get(m.get("type", "note"), 5), -int(m.get("importance") or 0)))
+
+    def _imp(m: dict) -> int:                     # a malformed row must not cost the whole brief
+        try:
+            return int(m.get("importance") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    kept = [m for m in mems if isinstance(m, dict) and m.get("type") != "episode"]
+    ordered = sorted(kept, key=lambda m: (m.get("_src", 0), prio.get(str(m.get("type", "note")), 5), -_imp(m)))
     lines, used = [], 0
     for m in ordered:
-        if m.get("type") == "episode":
-            continue
         date = str(m.get("created_at") or "")[:10]
-        meta = ", ".join(x for x in (m.get("type", "note"), m.get("project") or "", date) if x)
+        meta = ", ".join(x for x in (str(m.get("type", "note")), str(m.get("project") or ""), date) if x)
         line = f"    • [{meta}] {' '.join(str(m.get('preview', '')).split())}"
         if used + len(line) > budget:
             break
         lines.append(line)
         used += len(line)
-    return lines, len([m for m in ordered if m.get("type") != "episode"]) - len(lines)
+    return lines, len(ordered) - len(lines)
