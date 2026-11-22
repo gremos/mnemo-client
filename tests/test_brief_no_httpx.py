@@ -85,7 +85,7 @@ def test_lessons_come_first_when_memories_fill_the_budget(tmp_path):
     srv = HTTPServer(("127.0.0.1", 0), _Full)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     (tmp_path / ".mnemo.env").write_text(f"MNEMO_BASE_URL=http://127.0.0.1:{srv.server_port}\nMNEMO_HOOK_KEY=k\n")
-    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "MNEMO_BRIEF_ARM": "brief"}   # the old brief's budget
     r = subprocess.run([sys.executable, str(ROOT / "load-context.py")], env=env, capture_output=True, text=True,
                        input=json.dumps({"session_id": "t", "cwd": str(tmp_path), "source": "startup"}), timeout=30)
     srv.shutdown()

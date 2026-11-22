@@ -36,11 +36,13 @@ source = payload.get("source", "startup")
 # wiki map, which the map arms re-send (wiki_ab.py; the summary drops it).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wiki_ab  # noqa: E402
+import brief_ab  # noqa: E402
 from headless import is_headless  # noqa: E402
 
 if is_headless():                               # claude -p: nobody reads the brief
     sys.exit(0)
 _wiki_arm = wiki_ab.arm(session_id)
+_brief_arm = brief_ab.arm(session_id)
 if source == "compact":                         # the wiki map is re-sent by wiki-map.py
     sys.exit(0)
 
@@ -444,31 +446,47 @@ try:
         # tool, so the MCP tools/call always failed (wasted round-trip). Session
         # attribution now rides the X-Session-Id header set above.
 
-        args: dict = {"limit": 15, "scope": "both"}
-        if _query:
-            args["query"] = _query
-            args["min_importance"] = 4
+        def _get_mems(a: dict, rpc_id: int) -> list:
+            """One get_memories call; raises on a tool error (e.g. an old server rejecting preview_chars)."""
+            resp = client.post(MCP_URL, headers=_mcp_headers,
+                               json={"jsonrpc": "2.0", "id": rpc_id, "method": "tools/call",
+                                     "params": {"name": "get_memories", "arguments": a}})
+            resp.raise_for_status()
+            res = _parse_sse(resp.text).get("result", {})
+            if res.get("isError"):
+                raise ValueError("get_memories tool error")
+            c = res.get("content", [])
+            raw = c[0].get("text", "[]") if isinstance(c, list) and c else "[]"
+            out = json.loads(raw) if isinstance(raw, str) else []
+            return out if isinstance(out, list) else []
+
+        if _brief_arm == "full":
+            # brief_ab.py: this project's memories, then every project's, whole and all of them; a server older
+            # than preview_chars gets today's 50-cap call instead of losing the brief.
+            def _full(a: dict, rpc_id: int) -> list:
+                try:
+                    return _get_mems({**a, **brief_ab.PAGE}, rpc_id)
+                except Exception:
+                    return _get_mems({**a, "limit": brief_ab.OLD_CAP}, rpc_id)
+
+            base = {"scope": "both", "min_importance": 1}
+            own = _full({**base, "project": _brief_project}, 2) if _brief_project and _brief_project != "*" else []
+            try:
+                every = _full({**base, "project": "*"}, 7)
+            except Exception:
+                every = []
+            memories = brief_ab.merge(own, every)
+            args = {**base, "project": "*"}          # nothing left for the cross-project fallback below
         else:
-            args["min_importance"] = 5
-        if _brief_project:
-            args["project"] = _brief_project
-
-        mem_resp = client.post(
-            MCP_URL,
-            headers=_mcp_headers,
-            json={
-                "jsonrpc": "2.0", "id": 2,
-                "method": "tools/call",
-                "params": {"name": "get_memories", "arguments": args},
-            },
-        )
-        mem_resp.raise_for_status()
-
-        data = _parse_sse(mem_resp.text)
-        content = data.get("result", {}).get("content", [])
-        if isinstance(content, list) and content:
-            raw = content[0].get("text", "[]")
-            memories = json.loads(raw) if isinstance(raw, str) else []
+            args: dict = {"limit": 15, "scope": "both"}
+            if _query:
+                args["query"] = _query
+                args["min_importance"] = 4
+            else:
+                args["min_importance"] = 5
+            if _brief_project:
+                args["project"] = _brief_project
+            memories = _get_mems(args, 2)
 
         # A repo can still hold no knowledge memories (a workspace repo like XO/ files only
         # session episodes under its name) -> fall back to the cross-project brief.
@@ -562,6 +580,11 @@ for _les in active_lessons[:5]:
     char_used += len(_dline)
 
 pitfall_lines = []
+if _brief_arm == "full":                         # brief_ab.py: all of them, full preview, own budget
+    pitfalls = []
+    context_mems, _full_lines = [], brief_ab.full_lines(memories)
+else:
+    _full_lines = None
 for m in pitfalls:
     imp = m.get("importance", "?")
     preview = m.get("preview", "")[:200].replace("\n", " ")
@@ -583,10 +606,10 @@ for m in context_mems:
     char_used += len(line)
 
 proj_label = f'"{project}"' if project else "all projects"
-if not pitfall_lines and not context_lines and not directive_lines:
+if not pitfall_lines and not context_lines and not directive_lines and not (_full_lines and _full_lines[0]):
     lines = [f'[mnemo] No memories loaded (project={proj_label}). Use save_memory to start building context.']
 else:
-    lines = [f"[mnemo] Session brief for {proj_label}:"]
+    lines = [f"[mnemo] Session brief for {proj_label} (arm: {_brief_arm}):"]
     if directive_lines:
         omitted_d = len(active_lessons) - len(directive_lines)
         suffix = f" (+{omitted_d} omitted)" if omitted_d else ""
@@ -602,6 +625,11 @@ else:
         suffix = f" (+{omitted_c} omitted)" if omitted_c else ""
         lines.append(f"  Context{suffix}:")
         lines.extend(context_lines)
+    if _full_lines and _full_lines[0]:
+        _fl, _omitted = _full_lines
+        suffix = f" (+{_omitted} omitted)" if _omitted else ""
+        lines.append(f"  Stored memories — facts and decisions from past sessions; use the ones that apply{suffix}:")
+        lines.extend(_fl)
 
 if pending_memories:
     pending_budget = 400
