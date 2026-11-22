@@ -626,10 +626,18 @@ else:
         lines.append(f"  Context{suffix}:")
         lines.extend(context_lines)
     if _full_lines and _full_lines[0]:
+        # Claude Code caps each hook's injected context at 10,000 chars (over it: a 2 KB preview + file path), so the
+        # memory lines go to the brief-part.py hooks, one part each (brief_ab.py › parts).
         _fl, _omitted = _full_lines
-        suffix = f" (+{_omitted} omitted)" if _omitted else ""
-        lines.append(f"  Stored memories — facts and decisions from past sessions; use the ones that apply{suffix}:")
-        lines.extend(_fl)
+        _parts = brief_ab.split_parts(_fl)[:brief_ab.MAX_PARTS]
+        try:
+            brief_ab.write_parts(session_id, _parts)
+            _shown = sum(p.count("\n    •") for p in _parts)
+            _total = len(_fl) + _omitted
+            lines.append(f"  Stored memories: {_shown} of {_total}, whole, in {len(_parts)} part(s) injected beside "
+                         f"this brief.")
+        except OSError:
+            lines.append("  Stored memories: unavailable this session (could not write the parts file).")
 
 if pending_memories:
     pending_budget = 400
@@ -757,7 +765,7 @@ try:
 except Exception:
     pass  # fleet status is best-effort, never blocks the session prime
 
-context = "\n".join(lines)
+context = brief_ab.cap_text("\n".join(lines))   # Claude Code previews one hook over 10k chars
 
 # Prepend setup hint if ~/.mnemo.env is missing (new install or unconfigured machine)
 if not (Path.home() / ".mnemo.env").exists():

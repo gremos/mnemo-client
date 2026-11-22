@@ -1,7 +1,7 @@
 {
   "name": "mnemo",
-  "version": "2.6.0",
-  "description": "Long-term memory layer for Claude Code sessions \u2014 persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
+  "version": "2.6.1",
+  "description": "Long-term memory layer for Claude Code sessions — persists context across sessions, learns from corrections, enforces lessons at tool-use time.",
   "author": {
     "name": "George Pagaremos",
     "email": "gremos@users.noreply.github.com"
@@ -35,6 +35,69 @@
             ],
             "timeout": 5,
             "statusMessage": "Loading wiki map..."
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
+              "1"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
+              "2"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
+              "3"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
+              "4"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
+              "5"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
+              "6"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
+              "7"
+            ],
+            "timeout": 10
           }
         ]
       }

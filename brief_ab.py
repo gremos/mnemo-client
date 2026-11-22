@@ -8,7 +8,10 @@ the full arm shows all of them. Arms are stable per session: 20% keep the old br
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import time
+from pathlib import Path
 
 ARMS = ("brief", "full")
 CONTROL_SHARE = 20      # % of sessions on the old brief
@@ -63,3 +66,78 @@ def full_lines(mems: list[dict], budget: int = FULL_BUDGET) -> tuple[list[str], 
         lines.append(line)
         used += len(line)
     return lines, len(ordered) - len(lines)
+
+
+# ---- parts: Claude Code caps each hook's injected context at 10,000 chars (over it: a 2 KB preview + file path) ----
+PART_CHARS = 9500       # per part, header included
+MAX_PARTS = 7           # brief-part.py hooks registered in plugin.json (7 x 9.5k covers FULL_BUDGET)
+PARTS_DIR = Path(os.environ.get("CLAUDE_PLUGIN_DATA", os.path.expanduser("~/.mnemo"))) / "brief-parts"
+
+
+def split_parts(lines: list[str], max_chars: int = PART_CHARS) -> list[str]:
+    """Memory lines -> part texts, each under max_chars, each with its own header."""
+    chunks, cur, used = [], [], 0
+    for line in lines:
+        if cur and used + len(line) + 1 > max_chars - 200:
+            chunks.append(cur)
+            cur, used = [], 0
+        cur.append(line[: max_chars - 300])
+        used += len(line) + 1
+    if cur:
+        chunks.append(cur)
+    n = len(chunks)
+    return [f"[mnemo] Stored memories, part {i + 1}/{n} — facts and decisions from past sessions; use the ones that "
+            f"apply:\n" + "\n".join(c) for i, c in enumerate(chunks)]
+
+
+def _parts_file(session_id: str) -> Path:
+    return PARTS_DIR / (hashlib.sha256((session_id or "").encode()).hexdigest()[:24] + ".json")
+
+
+HOOK_CAP = 9800         # one hook's injected context must stay under Claude Code's 10,000-char cap
+KEEP_SECONDS = 3600     # parts files hold memory text: kept an hour, private to the user
+
+
+def cap_text(text: str, cap: int = HOOK_CAP) -> str:
+    """Last guard for one hook's output: over the cap, Claude Code would swap it for a 2 KB preview."""
+    if len(text) <= cap:
+        return text
+    cut = text[: cap - 60]
+    return cut[: cut.rfind("\n") if "\n" in cut else len(cut)] + "\n  (brief cut to fit the 10k hook cap)"
+
+
+def write_parts(session_id: str, parts: list[str]) -> None:
+    PARTS_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(PARTS_DIR, 0o700)
+    now = time.time()
+    for old in list(PARTS_DIR.glob("*.json")) + list(PARTS_DIR.glob("*.tmp")):   # earlier sessions, broken writes
+        try:
+            if now - old.stat().st_mtime > KEEP_SECONDS:
+                old.unlink()
+        except OSError:
+            pass
+    f = _parts_file(session_id)
+    tmp = f.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(json.dumps({"written": now, "parts": parts}))
+    os.replace(tmp, f)
+
+
+def read_part(session_id: str, n: int, wait: float = 7.0, started: float | None = None, slack: float = 3.0) -> str | None:
+    """Part n (1-based) written for this session start. load-context.py runs in parallel with the part hooks, so
+    wait up to `wait` seconds; a file written more than `slack` seconds before this part started belongs to an
+    earlier start of the same session (/resume, /clear) and is skipped."""
+    t0 = time.time() if started is None else started
+    f, deadline = _parts_file(session_id), time.time() + wait
+    while True:
+        try:
+            d = json.loads(f.read_text())
+            if float(d.get("written", 0)) >= t0 - slack:
+                parts = d.get("parts") or []
+                return parts[n - 1] if 0 < n <= len(parts) else None
+        except (OSError, ValueError):
+            pass
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.1)
