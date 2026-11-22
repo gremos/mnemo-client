@@ -67,9 +67,18 @@ def _run(tmp_path, arm):
     return json.loads(r.stdout[r.stdout.index("{"):])["hookSpecificOutput"]["additionalContext"], list(_MCP.calls)
 
 
+def _with_parts(tmp_path, ctx):
+    """The full arm's memory lines live in the brief-part hooks' parts file (brief_ab.py › parts)."""
+    f = brief_ab.PARTS_DIR.name
+    d = tmp_path / ".mnemo" / f
+    parts = [json.loads(x.read_text())["parts"] for x in d.glob("*.json")] if d.is_dir() else []
+    return ctx + "\n" + "\n".join(p for ps in parts for p in ps)
+
+
 def test_full_arm_shows_every_memory_untruncated(tmp_path):
     ctx, calls = _run(tmp_path, "full")
     assert "arm: full" in ctx
+    ctx = _with_parts(tmp_path, ctx)
     for i in range(60):                       # whole memories, all of them
         assert f"fact-{i} " in ctx and f"end-{i}" in ctx, i
     gm = [a for n, a in calls if n == "get_memories" and not a.get("tags")]
@@ -84,7 +93,7 @@ def test_full_arm_falls_back_on_an_old_server(tmp_path):
         ctx, calls = _run(tmp_path, "full")
     finally:
         _MCP.OLD_SERVER = False
-    assert "arm: full" in ctx and "fact-0 " in ctx          # still a brief, from the 50-cap call
+    assert "arm: full" in ctx and "fact-0 " in _with_parts(tmp_path, ctx)          # still a brief, from the 50-cap call
     gm = [a for n, a in calls if n == "get_memories" and not a.get("tags")]
     assert any("preview_chars" not in a and a.get("limit") == 50 for a in gm)
 

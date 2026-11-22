@@ -626,10 +626,16 @@ else:
         lines.append(f"  Context{suffix}:")
         lines.extend(context_lines)
     if _full_lines and _full_lines[0]:
+        # Claude Code caps each hook's injected context at 10,000 chars (over it: a 2 KB preview + file path), so the
+        # memory lines go to the brief-part.py hooks, one part each (brief_ab.py › parts).
         _fl, _omitted = _full_lines
-        suffix = f" (+{_omitted} omitted)" if _omitted else ""
-        lines.append(f"  Stored memories — facts and decisions from past sessions; use the ones that apply{suffix}:")
-        lines.extend(_fl)
+        _parts = brief_ab.split_parts(_fl)[:brief_ab.MAX_PARTS]
+        try:
+            brief_ab.write_parts(session_id, _parts)
+            suffix = f"; +{_omitted} omitted" if _omitted else ""
+            lines.append(f"  Stored memories: {len(_fl)} whole, in {len(_parts)} part(s) injected beside this brief{suffix}.")
+        except OSError:
+            lines.append("  Stored memories: unavailable this session (could not write the parts file).")
 
 if pending_memories:
     pending_budget = 400

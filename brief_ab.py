@@ -8,7 +8,10 @@ the full arm shows all of them. Arms are stable per session: 20% keep the old br
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import time
+from pathlib import Path
 
 ARMS = ("brief", "full")
 CONTROL_SHARE = 20      # % of sessions on the old brief
@@ -63,3 +66,61 @@ def full_lines(mems: list[dict], budget: int = FULL_BUDGET) -> tuple[list[str], 
         lines.append(line)
         used += len(line)
     return lines, len(ordered) - len(lines)
+
+
+# ---- parts: Claude Code caps each hook's injected context at 10,000 chars (over it: a 2 KB preview + file path) ----
+PART_CHARS = 9500       # per part, header included
+MAX_PARTS = 7           # brief-part.py hooks registered in plugin.json (7 x 9.5k covers FULL_BUDGET)
+PARTS_DIR = Path(os.environ.get("CLAUDE_PLUGIN_DATA", os.path.expanduser("~/.mnemo"))) / "brief-parts"
+
+
+def split_parts(lines: list[str], max_chars: int = PART_CHARS) -> list[str]:
+    """Memory lines -> part texts, each under max_chars, each with its own header."""
+    chunks, cur, used = [], [], 0
+    for line in lines:
+        if cur and used + len(line) + 1 > max_chars - 200:
+            chunks.append(cur)
+            cur, used = [], 0
+        cur.append(line[: max_chars - 300])
+        used += len(line) + 1
+    if cur:
+        chunks.append(cur)
+    n = len(chunks)
+    return [f"[mnemo] Stored memories, part {i + 1}/{n} — facts and decisions from past sessions; use the ones that "
+            f"apply:\n" + "\n".join(c) for i, c in enumerate(chunks)]
+
+
+def _parts_file(session_id: str) -> Path:
+    return PARTS_DIR / (hashlib.sha256((session_id or "").encode()).hexdigest()[:24] + ".json")
+
+
+def write_parts(session_id: str, parts: list[str]) -> None:
+    PARTS_DIR.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    for old in PARTS_DIR.glob("*.json"):                 # leftovers from earlier sessions
+        try:
+            if now - old.stat().st_mtime > 86400:
+                old.unlink()
+        except OSError:
+            pass
+    f = _parts_file(session_id)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"written": now, "parts": parts}))
+    os.replace(tmp, f)
+
+
+def read_part(session_id: str, n: int, wait: float = 4.0, max_age: float = 120.0) -> str | None:
+    """Part n (1-based) written for this session in the last max_age seconds; waits up to `wait` seconds for
+    load-context.py, which runs in parallel with the part hooks."""
+    f, deadline = _parts_file(session_id), time.time() + wait
+    while True:
+        try:
+            d = json.loads(f.read_text())
+            if time.time() - float(d.get("written", 0)) > max_age:
+                return None
+            parts = d.get("parts") or []
+            return parts[n - 1] if 0 < n <= len(parts) else None
+        except (OSError, ValueError):
+            if time.time() >= deadline:
+                return None
+            time.sleep(0.1)
