@@ -43,7 +43,7 @@
               "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
               "1"
             ],
-            "timeout": 8
+            "timeout": 10
           },
           {
             "type": "command",
@@ -52,7 +52,7 @@
               "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
               "2"
             ],
-            "timeout": 8
+            "timeout": 10
           },
           {
             "type": "command",
@@ -61,7 +61,7 @@
               "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
               "3"
             ],
-            "timeout": 8
+            "timeout": 10
           },
           {
             "type": "command",
@@ -70,7 +70,7 @@
               "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
               "4"
             ],
-            "timeout": 8
+            "timeout": 10
           },
           {
             "type": "command",
@@ -79,7 +79,7 @@
               "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
               "5"
             ],
-            "timeout": 8
+            "timeout": 10
           },
           {
             "type": "command",
@@ -88,7 +88,7 @@
               "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
               "6"
             ],
-            "timeout": 8
+            "timeout": 10
           },
           {
             "type": "command",
@@ -97,7 +97,7 @@
               "${CLAUDE_PLUGIN_ROOT}/brief-part.py",
               "7"
             ],
-            "timeout": 8
+            "timeout": 10
           }
         ]
       }

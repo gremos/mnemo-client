@@ -632,8 +632,10 @@ else:
         _parts = brief_ab.split_parts(_fl)[:brief_ab.MAX_PARTS]
         try:
             brief_ab.write_parts(session_id, _parts)
-            suffix = f"; +{_omitted} omitted" if _omitted else ""
-            lines.append(f"  Stored memories: {len(_fl)} whole, in {len(_parts)} part(s) injected beside this brief{suffix}.")
+            _shown = sum(p.count("\n    •") for p in _parts)
+            _total = len(_fl) + _omitted
+            lines.append(f"  Stored memories: {_shown} of {_total}, whole, in {len(_parts)} part(s) injected beside "
+                         f"this brief.")
         except OSError:
             lines.append("  Stored memories: unavailable this session (could not write the parts file).")
 
@@ -763,7 +765,7 @@ try:
 except Exception:
     pass  # fleet status is best-effort, never blocks the session prime
 
-context = "\n".join(lines)
+context = brief_ab.cap_text("\n".join(lines))   # Claude Code previews one hook over 10k chars
 
 # Prepend setup hint if ~/.mnemo.env is missing (new install or unconfigured machine)
 if not (Path.home() / ".mnemo.env").exists():

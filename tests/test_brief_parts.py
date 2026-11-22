@@ -32,7 +32,7 @@ def test_parts_round_trip_and_stale_files_are_ignored(tmp_path, monkeypatch):
     assert brief_ab.read_part("s1", 2, wait=0.1) == "B"
     assert brief_ab.read_part("s1", 3, wait=0.1) is None
     assert brief_ab.read_part("other", 1, wait=0.1) is None
-    assert brief_ab.read_part("s1", 1, wait=0.1, max_age=-1) is None      # older than max_age
+    assert brief_ab.read_part("s1", 1, wait=0.1, started=__import__("time").time() + 60) is None   # an earlier start
 
 
 def _part(tmp_path, n, source="startup"):
@@ -69,3 +69,25 @@ def test_plugin_registers_every_part_hook():
     args = [" ".join(h.get("args", [])) for e in hooks for h in e["hooks"]]
     for n in range(1, brief_ab.MAX_PARTS + 1):
         assert any(a.endswith(f"brief-part.py {n}") for a in args), n
+
+
+def test_a_part_ignores_parts_written_before_it_started(tmp_path, monkeypatch):
+    """/resume or /clear: the previous start's file for the same session must not be served to the new start."""
+    import time
+    monkeypatch.setattr(brief_ab, "PARTS_DIR", tmp_path)
+    brief_ab.write_parts("s1", ["OLD"])
+    assert brief_ab.read_part("s1", 1, wait=0.2, started=time.time() + 10) is None
+    assert brief_ab.read_part("s1", 1, wait=0.2, started=time.time()) == "OLD"
+
+
+def test_parts_file_is_private(tmp_path, monkeypatch):
+    d = tmp_path / "parts"
+    monkeypatch.setattr(brief_ab, "PARTS_DIR", d)
+    brief_ab.write_parts("s1", ["memory text"])
+    f = next(d.glob("*.json"))
+    assert (f.stat().st_mode & 0o777) == 0o600 and (d.stat().st_mode & 0o777) == 0o700
+
+
+def test_cap_text_keeps_a_hook_under_ten_thousand():
+    assert len(brief_ab.cap_text("x" * 20000)) < 10000
+    assert brief_ab.cap_text("short") == "short"
