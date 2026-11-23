@@ -31,9 +31,9 @@ session_id = payload.get("session_id", "")
 cwd = payload.get("cwd", "")
 source = payload.get("source", "startup")
 
-# Re-prime on start, resume and /clear (clear empties the context: igkiatis' 2026-10-02 session
-# started from /clear and had no brief). Not on compact: its summary keeps the context — except the
-# wiki map, which the map arms re-send (wiki_ab.py; the summary drops it).
+# Re-prime on start, resume, /clear (clear empties the context: igkiatis' 2026-10-02 session started from /clear
+# and had no brief) and compact: compaction summaries kept 1 of 158 brief memory lines (11 sessions, 2026-11-23),
+# so a long session lost its memories at the first compaction. Compact skips the start-commit sidecar.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wiki_ab  # noqa: E402
 import brief_ab  # noqa: E402
@@ -43,8 +43,6 @@ if is_headless():                               # claude -p: nobody reads the br
     sys.exit(0)
 _wiki_arm = wiki_ab.arm(session_id)
 _brief_arm = brief_ab.arm(session_id)
-if source == "compact":                         # the wiki map is re-sent by wiki-map.py
-    sys.exit(0)
 
 # ---------------------------------------------------------------------------
 # Resolve config: plugin env vars > legacy env files
@@ -245,7 +243,7 @@ _brief_project = project if _in_project else "*"
 if not _query and project and not _in_home:
     _query = project
 
-if session_id and _start_sha:
+if session_id and _start_sha and source != "compact":   # the session's start commit, set once per start
     try:
         _sidecar = str(Path(tempfile.gettempdir()) / f"mnemo-session-{session_id[:8]}.start")
         with open(_sidecar, "w") as _sf:

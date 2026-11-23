@@ -3,7 +3,7 @@
 
 Claude Code caps each hook's injected context at 10,000 chars, so load-context.py writes the memory lines as parts
 and one brief-part.py hook per part injects its own. Silent when there is no part N for this session (old-brief arm,
-small store, compact, headless run, or load-context.py did not finish).
+small store, headless run, or load-context.py did not finish). Runs on compact too: summaries drop the memories.
 """
 import json
 import os
@@ -20,7 +20,7 @@ def main() -> None:
         n = int(sys.argv[1])
     except Exception:
         return
-    if is_headless() or payload.get("source") == "compact":
+    if is_headless():
         return
     text = brief_ab.read_part(payload.get("session_id", ""), n)
     if text:
