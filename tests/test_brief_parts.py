@@ -57,11 +57,19 @@ def test_full_brief_and_its_parts_each_fit_and_carry_every_memory(tmp_path):
     assert all(f"fact-{i} " in allx and f"end-{i}" in allx for i in range(120))
 
 
-def test_parts_stay_silent_on_compact_and_for_the_old_brief(tmp_path):
+def test_parts_stay_silent_for_the_old_brief(tmp_path):
     ctx, _ = _run(tmp_path, "brief")
     assert all(_part(tmp_path, n) == "" for n in (1, 2))
-    _run(tmp_path, "full")
-    assert _part(tmp_path, 1, source="compact") == ""
+
+
+def test_compaction_resends_the_brief_in_both_arms(tmp_path):
+    """2026-11-23: compaction summaries kept 1 of 158 brief memory lines (11 compacted sessions, laptop + 101), and
+    long sessions compact up to 21 times, so after the first compaction a session ran without its memories."""
+    ctx, _ = _run(tmp_path, "full", source="compact")
+    assert "arm: full" in ctx
+    assert "fact-" in _part(tmp_path, 1, source="compact")
+    ctx, _ = _run(tmp_path, "brief", source="compact")
+    assert "arm: brief" in ctx
 
 
 def test_plugin_registers_every_part_hook():

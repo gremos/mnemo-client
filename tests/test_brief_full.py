@@ -52,7 +52,7 @@ class _MCP(BaseHTTPRequestHandler):
         pass
 
 
-def _run(tmp_path, arm):
+def _run(tmp_path, arm, source="startup"):
     _MCP.calls = []
     srv = HTTPServer(("127.0.0.1", 0), _MCP)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -62,7 +62,7 @@ def _run(tmp_path, arm):
     (tmp_path / ".mnemo.env").write_text(f"MNEMO_BASE_URL=http://127.0.0.1:{srv.server_port}\nMNEMO_HOOK_KEY=k\n")
     env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "MNEMO_BRIEF_ARM": arm}
     r = subprocess.run([sys.executable, str(ROOT / "load-context.py")], env=env, capture_output=True, text=True,
-                       input=json.dumps({"session_id": "t", "cwd": str(proj), "source": "startup"}), timeout=30)
+                       input=json.dumps({"session_id": "t", "cwd": str(proj), "source": source}), timeout=30)
     srv.shutdown()
     return json.loads(r.stdout[r.stdout.index("{"):])["hookSpecificOutput"]["additionalContext"], list(_MCP.calls)
 
