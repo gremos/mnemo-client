@@ -95,18 +95,97 @@ def map_block(pages: list[dict], root: Path | None = None) -> str:
     return local_map_block(root or LOCAL_ROOT)
 
 
+# Claude Code injects at most 10,000 chars per hook (over it: a 2 KB preview). The team index.md grew to ~40 KB, so
+# from 2026-11-24 sessions saw only its first ~20 rows. The map is now compact: every page name under its folder
+# heading, summaries cut to the widest width that fits, full summaries left in index.md.
+MAP_CHARS = 9000
+_PAGE_REF = re.compile(r"\[\[([^\]|]+)\]\]|\]\(/([^)#\s]+)\)")
+_SUMMARY_WIDTHS = (200, 140, 100, 70, 45, 25, 0)
+
+
+def _index_rows(idx: str) -> list[tuple[str, str, str]]:
+    """index.md as (heading, page path under it, summary) rows; list form "- [[id]] — s" / "- [T](/id) — s" and
+    table form "| [[id]] | s | date |"."""
+    rows, heading, prefix = [], "", ""
+    for line in idx.splitlines():
+        if line.startswith("## "):
+            heading = line[3:].split(" — ")[0].strip()
+            prefix = heading if heading.endswith("/") else None      # folder headings only (team: "## Products/")
+            rows.append((heading, "", ""))
+            continue
+        refs = list(_PAGE_REF.finditer(line))
+        if not refs:
+            continue
+        ids = [m.group(1) or m.group(2) for m in refs]
+        if line.lstrip().startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            summary = cells[1] if len(cells) > 1 else ""
+        else:                                                    # after the last link: a title may hold " — "
+            rest = line[refs[-1].end():]
+            summary = rest.split(" — ", 1)[1].strip() if " — " in rest else ""
+        for n, pid in enumerate(ids):                                # "[A](/a) · [B](/b)": every page counts
+            rel = pid[len(prefix):] if prefix and pid.startswith(prefix) else pid
+            rows.append((heading, rel, summary if n == 0 else ""))
+    return rows
+
+
+def _render(rows: list[tuple[str, str, str]], width: int) -> list[str]:
+    out = []
+    for heading, rel, summary in rows:
+        if not rel:
+            out.append(f"    ## {heading}")
+        elif width and summary:
+            s = summary if len(summary) <= width else summary[:width - 1].rstrip() + "…"
+            out.append(f"    - {rel} — {s}")
+        else:
+            out.append(f"    - {rel}")
+    return out
+
+
+def _render_grouped(rows: list[tuple[str, str, str]]) -> list[str]:
+    """Densest form: per heading, pages grouped by sub-folder on one line, `F/: a · b` (= F/a, F/b)."""
+    out, groups = [], {}
+    def flush():
+        out.extend(f"    {f + '/: ' if f else ''}{' · '.join(names)}" for f, names in groups.items())
+        groups.clear()
+    for heading, rel, _ in rows:
+        if not rel:
+            flush()
+            out.append(f"    ## {heading}")
+        else:
+            folder, _, leaf = rel.rpartition("/")
+            groups.setdefault(folder, []).append(leaf)
+    flush()
+    return out
+
+
 def local_map_block(root: Path | None = None) -> str:
-    """The wiki's own index.md (every page, one line each) with the absolute page location."""
+    """Compact wiki map: every page of index.md under its folder heading, summaries shortened to fit MAP_CHARS."""
     root = root or LOCAL_ROOT
     try:
         idx = (root / "index.md").read_text(errors="replace")
-        sha = (root / ".wiki-commit").read_text().strip()[:8] if (root / ".wiki-commit").is_file() else "?"
     except OSError:
         return ""
-    body = "\n".join("    " + l for l in idx.splitlines() if l.strip() and not l.startswith(("# ", "_")))
+    sha = (root / ".wiki-commit").read_text().strip()[:8] if (root / ".wiki-commit").is_file() else "?"
     where = f"local copy at {root} @ {sha}" if sha != "?" else f"git checkout at {root}"
-    return (f"  Wiki map ({label(root)}, {where}; page [[x]] or (/x) is {root}/wiki/x.md — on a subject "
-            f"listed here, Read the page before deciding and cite it):\n" + body)
+    head = (f"  Wiki map ({label(root)}, {where}; page p is {root}/wiki/p.md, or {root}/wiki/D/p.md under a folder "
+            f"heading `## D/`; `F/: a · b` lists pages F/a and F/b; full summaries in {root}/index.md — on a subject "
+            f"listed here, Read the page before deciding and cite it):\n")
+    rows = _index_rows(idx)
+    for lines in [_render(rows, w) for w in _SUMMARY_WIDTHS] + [_render_grouped(rows)]:
+        if len(head) + len("\n".join(lines)) <= MAP_CHARS:
+            return head + "\n".join(lines)
+    lines, cut = _render_grouped(rows), 0
+    tail = lambda: f"\n    … +{cut} more pages listed in {root}/index.md"
+    while lines and len(head) + len("\n".join(lines)) + len(tail()) > MAP_CHARS:
+        last = lines.pop()
+        if not last.lstrip().startswith("##"):
+            names = last.split(": ", 1)[-1].split(" · ")
+            keep = names[:len(names) // 2]
+            cut += len(names) - len(keep)
+            if keep:
+                lines.append(last[:len(last) - len(" · ".join(names))] + " · ".join(keep))
+    return head + "\n".join(lines) + tail()
 
 
 def cache_path(root: Path | None = None) -> Path:
