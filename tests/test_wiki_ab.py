@@ -114,7 +114,7 @@ def test_local_source_map_and_pointer(tmp_path, monkeypatch):
     assert pages == [{"id": "platforms/gpml01", "title": "GPML01 — gyp.gr Mail Server", "domain": "platforms",
                       "path": str(tmp_path / "wiki" / "platforms" / "gpml01.md"), "summary": "mail server"}]
     block = wiki_ab.map_block(pages)
-    assert "local copy at" in block and "@ abcdef12" in block and "[[platforms/gpml01]] — mail server" in block
+    assert "local copy at" in block and "@ abcdef12" in block and "## platforms/\n    - gpml01 — mail server" in block
     assert "XO Company Wiki" not in block                                  # index title/subtitle dropped
     hits = wiki_ab.topic_matches("check health of gpml01", pages)
     assert "Read " + str(tmp_path / "wiki" / "platforms" / "gpml01.md") in wiki_ab.pointer_text(hits)
@@ -125,7 +125,7 @@ def test_brief_uses_local_copy_without_server(tmp_path):
     env = {"MNEMO_WIKI_DIR": str(tmp_path / "xo-wiki")}
     start = {"session_id": "t", "cwd": str(tmp_path), "source": "startup"}
     out = _run("wiki-map.py", tmp_path, start, "map_topic", extra_env=env)   # no server, no key
-    assert out.startswith("[wiki]") and "local copy at" in out and "[[platforms/gpml01]]" in out
+    assert out.startswith("[wiki]") and "local copy at" in out and "- gpml01 — mail server" in out
     assert _run("wiki-map.py", tmp_path, {**start, "source": "compact"}, "map_topic", extra_env=env) == out
     assert _run("wiki-map.py", tmp_path, start, "control", extra_env=env) == ""
     assert _run("load-context.py", tmp_path, start, "map_topic", extra_env=env) == ""   # no duplicate map
@@ -146,8 +146,8 @@ def test_personal_wiki_for_personal_sessions_never_mixed(tmp_path):
     team = {**personal, "cwd": str(tmp_path / "XO" / "agora")}
     p = _run("wiki-map.py", tmp_path, personal, "map_topic", extra_env=env)
     t = _run("wiki-map.py", tmp_path, team, "map_topic", extra_env=env)
-    assert "personal wiki" in p and "[[projects/newsbeast]]" in p and "gpml01" not in p
-    assert "team wiki" in t and "[[platforms/gpml01]]" in t and "newsbeast" not in t
+    assert "personal wiki" in p and "- projects/newsbeast — Newsbeast perf" in p and "gpml01" not in p
+    assert "team wiki" in t and "- gpml01 — mail server" in t and "newsbeast" not in t
     # separate caches: a team-session pointer still works after a personal session started
     q = _run("wiki-topic.py", tmp_path, {"session_id": "t2", "cwd": str(tmp_path / "XO" / "agora"),
                                           "prompt": "is gpml01 healthy?"}, "map_topic", extra_env=env)
@@ -164,3 +164,61 @@ def test_hook_texts_keep_the_contract_the_mnemo_audits_read(tmp_path, monkeypatc
     assert re.search(r"Wiki map \((?:team|personal) wiki", wiki_ab.local_map_block(tmp_path))
     monkeypatch.setattr(wiki_ab, "PERSONAL_ROOT", tmp_path)
     assert re.search(r"Wiki map \((?:team|personal) wiki", wiki_ab.local_map_block(tmp_path))
+
+
+def _big_index(root, pages=150, summary=230):
+    lines = ["# XO Company Wiki", "_compiled_", ""]
+    for sec in ("Products/", "Platforms/", "Operations/"):
+        lines.append(f"## {sec} — what lives here")
+        for i in range(pages // 3):
+            pid = f"{sec}Agora/Some-Long-Descriptive-Page-Name-{i:03d}"
+            lines.append(f"- [Some Long Descriptive Page Name {i}](/{pid}) — " + ("detail " * 40)[:summary])
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "index.md").write_text("\n".join(lines) + "\n")
+
+
+def test_map_fits_one_hook_and_keeps_every_page(tmp_path):
+    _big_index(tmp_path, pages=180)                         # ~48 KB index (team wiki: 40 KB, 140 pages, 2026-11-27)
+    assert len((tmp_path / "index.md").read_text()) > 35000
+    block = wiki_ab.local_map_block(tmp_path)
+    assert len(block) <= wiki_ab.MAP_CHARS < 9800           # under Claude Code's 10k per-hook cap
+    for sec in ("Products", "Platforms", "Operations"):
+        assert f"## {sec}/" in block
+        for i in range(60):
+            assert f"Some-Long-Descriptive-Page-Name-{i:03d}" in block           # every page, folder-relative
+    assert "    Agora/: Some-Long-Descriptive-Page-Name-000 · Some-Long-Descriptive-Page-Name-001" in block
+    assert "index.md" in block and str(tmp_path) in block   # where the full summaries are
+    assert "more pages" not in block
+
+
+def test_map_summaries_shrink_before_pages_go(tmp_path):
+    _big_index(tmp_path, pages=30, summary=230)             # small wiki: room for summaries
+    block = wiki_ab.local_map_block(tmp_path)
+    assert "— detail detail" in block and len(block) <= wiki_ab.MAP_CHARS
+
+
+def test_map_overflow_names_the_cut(tmp_path):
+    _big_index(tmp_path, pages=600)                         # names alone exceed the budget
+    block = wiki_ab.local_map_block(tmp_path)
+    assert len(block) <= wiki_ab.MAP_CHARS
+    assert "more pages" in block and "index.md" in block
+
+
+def test_map_table_index_personal_form(tmp_path):
+    (tmp_path / "index.md").write_text("# Personal\n\n## Projects\n| Page | Description | Updated |\n|---|---|---|\n"
+                                       "| [[projects/mnemo]] | memory server | 2026-10-25 |\n")
+    block = wiki_ab.local_map_block(tmp_path)
+    assert "## Projects\n    - projects/mnemo — memory server" in block and "| Page |" not in block   # path kept
+
+
+def test_map_every_link_on_a_line_and_paths_resolve(tmp_path):
+    (tmp_path / "index.md").write_text("## Platforms/\n- [Mail](/Platforms/Mail) · [KIWI01](/Platforms/Mail/KIWI01) — mail\n"
+                                       "## Projects\n- [[projects/x]] — x\n")
+    block = wiki_ab.local_map_block(tmp_path)
+    assert "- Mail — mail" in block and "- Mail/KIWI01" in block          # second link kept
+    assert "- projects/x — x" in block                                   # non-folder heading: full id = wiki/projects/x.md
+
+
+def test_map_title_with_dash_keeps_the_real_summary(tmp_path):
+    (tmp_path / "index.md").write_text("## Platforms/\n- [GPML01 — mail](/Platforms/gpml01) — the summary\n")
+    assert "- gpml01 — the summary" in wiki_ab.local_map_block(tmp_path)

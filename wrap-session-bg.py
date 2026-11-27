@@ -37,6 +37,7 @@ from pathlib import Path
 _plugin_dir = Path(__file__).parent
 if str(_plugin_dir) not in sys.path:
     sys.path.insert(0, str(_plugin_dir))
+import wrap_window  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging — writes to /tmp so it's visible for debugging without cluttering repo
@@ -126,44 +127,6 @@ def _find_jsonl(session_id: str, cwd: str) -> Path | None:
     return None
 
 
-def _extract_text(content) -> str:
-    """Flatten content (string or list of blocks) to plain text."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
-        return "\n".join(parts)
-    return ""
-
-
-def _load_conversation(jsonl_path: Path, max_messages: int = 80) -> list[dict]:
-    """Load the last N user/assistant messages from the session JSONL."""
-    messages = []
-    try:
-        for line in jsonl_path.read_text(errors="replace").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            t = obj.get("type")
-            if t not in ("user", "assistant"):
-                continue
-            msg = obj.get("message", {})
-            role = msg.get("role", t)
-            text = _extract_text(msg.get("content", "")).strip()
-            if text:
-                messages.append({"role": role, "text": text})
-    except Exception as e:
-        log.warning("Failed to read JSONL: %s", e)
-    return messages[-max_messages:]
-
-
 _SYSTEM_NOISE_PATTERNS = [
     re.compile(r"<local-command-caveat>.*?</local-command-caveat>", re.DOTALL),
     re.compile(r"<local-command-stdout>.*?</local-command-stdout>", re.DOTALL),
@@ -208,14 +171,15 @@ def _build_conversation_text(messages: list[dict]) -> str:
         text = _clean_message(m["text"])
         if len(text) < 5:
             continue
-        prefix = "USER" if m["role"] == "user" else "ASSISTANT"
+        prefix = ("ASSISTANT (earlier reply, context only)" if m.get("context")
+                  else "USER" if m["role"] == "user" else "ASSISTANT")
         cleaned.append((prefix, text[:_MAX_MESSAGE_CHARS]))
 
     # Budget: prioritize user messages, keep first + last if over budget
     total = sum(len(t) for _, t in cleaned)
     if total > _MAX_CONVERSATION_CHARS:
         user_msgs = [(i, p, t) for i, (p, t) in enumerate(cleaned) if p == "USER"]
-        asst_msgs = [(i, p, t) for i, (p, t) in enumerate(cleaned) if p == "ASSISTANT"]
+        asst_msgs = [(i, p, t) for i, (p, t) in enumerate(cleaned) if p.startswith("ASSISTANT")]
         # Keep all user messages, trim assistant messages from the middle
         budget_left = _MAX_CONVERSATION_CHARS - sum(len(t) for _, _, t in user_msgs)
         if budget_left > 0 and asst_msgs:
@@ -239,14 +203,12 @@ You analyze Claude Code conversation logs to extract RL feedback signals for a m
 Count only clear, unambiguous signals from the USER — not from system-injected content.
 
 Return ONLY valid JSON with these fields:
-- corrections (int): count of times the user explicitly corrects or rejects Claude's action.
-  Examples that ARE corrections:
-    - "no, use X instead" / "wrong approach" / "don't do that" / "undo" / "that's not what I asked"
-    - User interrupts and redirects: "[Request interrupted by user]" followed by a different instruction
-  Examples that are NOT corrections:
-    - The word "no" inside a description or technical context (e.g. "no re-poll for new records")
-    - Skill instruction text containing words like "don't" or "stop" (these are system boilerplate)
-    - User providing new information or clarifications (not a rejection of Claude's work)
+- corrections (int): count of USER messages that CORRECT the assistant: say it was wrong or misunderstood,
+  repeat or re-ask an instruction it did not follow, undo or reject what it did, or point out something it
+  should have known. A "[Request interrupted by user]" followed by a different instruction counts.
+  New requests, follow-ups, approvals and answers to the assistant's questions are NOT corrections; neither is
+  the word "no" inside a description, nor skill/system boilerplate. A message marked "ASSISTANT (earlier reply,
+  context only)" is there only so a first USER message can be read against it; count nothing in it.
 - approvals (int): count of explicit user approvals of non-obvious Claude decisions.
   Examples: "yes", "perfect", "exactly", "proceed", "approved", accepting a plan, "looks good"
   NOT approvals: "ok" as acknowledgement, "continue" without context, routine confirmations
@@ -524,9 +486,10 @@ def main() -> None:
         log.warning("JSONL not found for session %s — skipping", session_id)
         return
 
-    messages = _load_conversation(jsonl)
+    win_start, earlier_corrections = wrap_window.get(wrap_window.STATE, session_id)
+    messages, win_end = wrap_window.load(jsonl, win_start)
     if not messages:
-        log.warning("No messages extracted from %s", jsonl)
+        log.info("Nothing new since the previous wrap of %s (line %d) — skipping", session_id[:8], win_start)
         return
 
     log.info("Loaded %d messages from %s", len(messages), jsonl)
@@ -572,11 +535,21 @@ def main() -> None:
         log.info("No local Azure credentials — delegating extraction to server")
         session_text_for_server = conversation_text
 
+    # The episode carries the session's running total: earlier windows + this one (ticket 27).
+    window_corrections = corrections
+    if corrections is not None:
+        corrections = earlier_corrections + corrections
+    elif earlier_corrections:
+        corrections = earlier_corrections
+
     # Wrap session via Mnemo (server runs extraction if session_text provided)
     result = _wrap_session(session_id, project, summary, outcome, corrections, approvals,
                            session_text=session_text_for_server, memory_helped=memory_helped)
     if result is not None:
-        log.info("wrap_session completed successfully")
+        log.info("wrap_session completed successfully (window lines %d-%d, corrections %s, total %s)",
+                 win_start, win_end, window_corrections, corrections)
+        if window_corrections is not None:     # labelled here; a server-side job's count never reaches us,
+            wrap_window.put(wrap_window.STATE, session_id, win_end, corrections)   # so keep that window open
         # If we delegated extraction to the server, read back the extracted data
         if session_text_for_server:
             wiki_summary  = result.get("wiki_summary") or wiki_summary
